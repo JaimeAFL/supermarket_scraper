@@ -25,7 +25,7 @@ from scraper.dia import gestion_dia
 from scraper.alcampo import gestion_alcampo
 from scraper.eroski import gestion_eroski
 from database.init_db import inicializar_base_datos
-from database.db_manager import DatabaseManager
+from database.database_db_manager import DatabaseManager
 
 
 def setup_logging():
