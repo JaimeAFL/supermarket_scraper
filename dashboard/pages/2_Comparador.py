@@ -9,7 +9,10 @@ usando los grupos de equivalencia definidos (manual o automáticamente).
 
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 import streamlit as st
 import pandas as pd
@@ -21,7 +24,6 @@ from dashboard.utils.charts import (
     grafico_barras_precio_actual
 )
 
-st.set_page_config(page_title="Comparador", page_icon="⚖️", layout="wide")
 
 st.title("⚖️ Comparador de supermercados")
 st.markdown("Compara el precio del mismo producto en distintos supermercados.")
@@ -40,12 +42,12 @@ matcher = ProductMatcher(db)
 
 
 # =============================================================================
-# PESTAÑAS: Equivalencias existentes / Buscar nuevas
+# PESTAÑAS
 # =============================================================================
 tab1, tab2, tab3 = st.tabs([
-    "📋 Equivalencias guardadas",
-    "🔍 Buscar equivalencias",
-    "🤖 Auto-detectar equivalencias"
+    "Equivalencias guardadas",
+    "Buscar equivalencias",
+    "Auto-detectar equivalencias"
 ])
 
 
@@ -57,7 +59,6 @@ with tab1:
         grupo_sel = st.selectbox("Selecciona un grupo de equivalencia:", grupos)
 
         if grupo_sel:
-            # Precio actual comparado
             df_equiv = db.obtener_equivalencias(grupo_sel)
 
             if not df_equiv.empty:
@@ -67,7 +68,6 @@ with tab1:
                     use_container_width=True
                 )
 
-                # Histórico comparado
                 st.subheader("Evolución temporal comparada")
                 df_hist = db.obtener_historico_equivalencia(grupo_sel)
                 st.plotly_chart(
@@ -75,7 +75,6 @@ with tab1:
                     use_container_width=True
                 )
 
-                # Tabla detalle
                 with st.expander("Ver detalle"):
                     st.dataframe(
                         df_equiv[['nombre', 'supermercado', 'formato', 'precio']],
@@ -97,7 +96,7 @@ with tab2:
     )
 
     col_busq, col_umbral = st.columns([3, 1])
-    
+
     with col_busq:
         texto_busqueda = st.text_input(
             "Producto a buscar:",
@@ -119,7 +118,6 @@ with tab2:
                 hide_index=True
             )
 
-            # Botón para guardar como equivalencia
             st.markdown("---")
             nombre_grupo = st.text_input(
                 "Nombre para el grupo de equivalencia:",
@@ -135,7 +133,7 @@ with tab2:
                 default=df_similares['id'].tolist()
             )
 
-            if st.button("💾 Guardar equivalencia", key="btn_guardar_equiv"):
+            if st.button("Guardar equivalencia", key="btn_guardar_equiv"):
                 if ids_seleccionados and nombre_grupo:
                     matcher.crear_equivalencia_manual(nombre_grupo, ids_seleccionados)
                     st.success(f"Equivalencia '{nombre_grupo}' guardada con {len(ids_seleccionados)} productos.")
@@ -160,10 +158,10 @@ with tab3:
         key="umbral_auto"
     )
 
-    if st.button("🤖 Ejecutar auto-detección", key="btn_auto"):
+    if st.button("Ejecutar auto-detección", key="btn_auto"):
         with st.spinner("Buscando equivalencias automáticas..."):
             creadas = matcher.auto_crear_equivalencias(umbral=umbral_auto)
-        
+
         if creadas > 0:
             st.success(f"Se crearon {creadas} equivalencias automáticas.")
             st.rerun()
