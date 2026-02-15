@@ -24,15 +24,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Instalar Playwright y navegador
+        run: |
+          playwright install chromium
+          playwright install-deps chromium
+
       - name: Crear archivo .env desde Secrets
         run: |
+          echo "CODIGO_POSTAL=${{ secrets.CODIGO_POSTAL }}" >> .env
           echo "COOKIE_CARREFOUR=${{ secrets.COOKIE_CARREFOUR }}" >> .env
           echo "COOKIE_DIA=${{ secrets.COOKIE_DIA }}" >> .env
-          echo "COOKIE_ALCAMPO=${{ secrets.COOKIE_ALCAMPO }}" >> .env
-          echo "COOKIE_EROSKI=${{ secrets.COOKIE_EROSKI }}" >> .env
 
       - name: Ejecutar scraper
         run: python main.py
+        timeout-minutes: 60
 
       - name: Commit y push de datos actualizados
         run: |
