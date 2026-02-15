@@ -41,14 +41,56 @@ class DatabaseManager:
             db_path (str): Ruta al archivo .db. Si no se indica, usa la ruta por defecto.
         """
         self.db_path = db_path or DB_PATH
+        self.conn = None
+        self._conectar()
+
+    def _conectar(self):
+        """Crea o recrea la conexión a la base de datos."""
+        try:
+            if self.conn:
+                self.conn.close()
+        except Exception:
+            pass
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row  # Para acceder a columnas por nombre
+        self.conn.row_factory = sqlite3.Row
         logger.info(f"Conexión abierta: {self.db_path}")
-    
+
+    def _obtener_cursor(self):
+        """
+        Devuelve un cursor válido. Si la conexión está rota, reconecta automáticamente.
+        Esto evita errores en Streamlit Cloud cuando el worker se recicla.
+        """
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT 1")  # Test rápido
+            return cursor
+        except Exception:
+            logger.warning("Conexión perdida, reconectando...")
+            self._conectar()
+            return self.conn.cursor()
+
+    def _asegurar_conexion(self):
+        """
+        Verifica que la conexión está viva (para uso con pd.read_sql_query).
+        Si está rota, reconecta.
+        
+        Returns:
+            sqlite3.Connection: Conexión válida.
+        """
+        try:
+            self.conn.cursor().execute("SELECT 1")
+        except Exception:
+            logger.warning("Conexión perdida, reconectando...")
+            self._conectar()
+        return self.conn
+
     def cerrar(self):
         """Cierra la conexión con la base de datos."""
         if self.conn:
-            self.conn.close()
+            try:
+                self.conn.close()
+            except Exception:
+                pass
             logger.info("Conexión cerrada.")
 
     # =========================================================================
@@ -68,7 +110,7 @@ class DatabaseManager:
         Returns:
             dict: Resumen con productos_nuevos, productos_actualizados y precios_registrados.
         """
-        cursor = self.conn.cursor()
+        cursor = self._obtener_cursor()
         nuevos = 0
         actualizados = 0
         precios_registrados = 0
@@ -168,7 +210,7 @@ class DatabaseManager:
         
         query += f" ORDER BY nombre LIMIT {limite}"
 
-        return pd.read_sql_query(query, self.conn, params=params)
+        return pd.read_sql_query(query, self._asegurar_conexion(), params=params)
 
     # =========================================================================
     # PRECIOS E HISTÓRICO
@@ -190,7 +232,7 @@ class DatabaseManager:
             WHERE producto_id = ?
             ORDER BY fecha_captura ASC
         """
-        return pd.read_sql_query(query, self.conn, params=[producto_id])
+        return pd.read_sql_query(query, self._asegurar_conexion(), params=[producto_id])
 
     def obtener_ultimo_precio(self, producto_id):
         """
@@ -202,7 +244,7 @@ class DatabaseManager:
         Returns:
             dict | None: Último precio con fecha, o None si no hay registros.
         """
-        cursor = self.conn.cursor()
+        cursor = self._obtener_cursor()
         cursor.execute("""
             SELECT precio, precio_por_unidad, fecha_captura
             FROM precios
@@ -253,7 +295,7 @@ class DatabaseManager:
         
         query += " ORDER BY p.nombre"
 
-        return pd.read_sql_query(query, self.conn, params=params)
+        return pd.read_sql_query(query, self._asegurar_conexion(), params=params)
 
     # =========================================================================
     # EQUIVALENCIAS
@@ -267,7 +309,7 @@ class DatabaseManager:
             nombre_comun (str): Nombre descriptivo del grupo (ej: "Coca-Cola 2L").
             lista_producto_ids (list): Lista de IDs internos de productos equivalentes.
         """
-        cursor = self.conn.cursor()
+        cursor = self._obtener_cursor()
         
         for producto_id in lista_producto_ids:
             cursor.execute("""
@@ -304,7 +346,7 @@ class DatabaseManager:
             WHERE e.nombre_comun = ?
             ORDER BY pr.precio ASC
         """
-        return pd.read_sql_query(query, self.conn, params=[nombre_comun])
+        return pd.read_sql_query(query, self._asegurar_conexion(), params=[nombre_comun])
 
     def obtener_historico_equivalencia(self, nombre_comun):
         """
@@ -326,7 +368,7 @@ class DatabaseManager:
             WHERE e.nombre_comun = ?
             ORDER BY pr.fecha_captura ASC
         """
-        return pd.read_sql_query(query, self.conn, params=[nombre_comun])
+        return pd.read_sql_query(query, self._asegurar_conexion(), params=[nombre_comun])
 
     def listar_grupos_equivalencia(self):
         """
@@ -335,7 +377,7 @@ class DatabaseManager:
         Returns:
             list: Lista de nombres comunes de grupos.
         """
-        cursor = self.conn.cursor()
+        cursor = self._obtener_cursor()
         cursor.execute("SELECT DISTINCT nombre_comun FROM equivalencias ORDER BY nombre_comun")
         return [row['nombre_comun'] for row in cursor.fetchall()]
 
@@ -345,7 +387,7 @@ class DatabaseManager:
 
     def agregar_favorito(self, producto_id):
         """Marca un producto como favorito."""
-        cursor = self.conn.cursor()
+        cursor = self._obtener_cursor()
         cursor.execute(
             "INSERT OR IGNORE INTO favoritos (producto_id) VALUES (?)",
             (producto_id,)
@@ -354,7 +396,7 @@ class DatabaseManager:
 
     def eliminar_favorito(self, producto_id):
         """Quita un producto de favoritos."""
-        cursor = self.conn.cursor()
+        cursor = self._obtener_cursor()
         cursor.execute(
             "DELETE FROM favoritos WHERE producto_id = ?",
             (producto_id,)
@@ -383,7 +425,7 @@ class DatabaseManager:
                      AND pr.fecha_captura = ultimo.max_fecha
             ORDER BY p.supermercado, p.nombre
         """
-        return pd.read_sql_query(query, self.conn)
+        return pd.read_sql_query(query, self._asegurar_conexion())
 
     # =========================================================================
     # ESTADÍSTICAS
@@ -396,7 +438,7 @@ class DatabaseManager:
         Returns:
             dict: Estadísticas del sistema.
         """
-        cursor = self.conn.cursor()
+        cursor = self._obtener_cursor()
 
         cursor.execute("SELECT COUNT(*) FROM productos")
         total_productos = cursor.fetchone()[0]
