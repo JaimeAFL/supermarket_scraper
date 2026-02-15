@@ -1,0 +1,35 @@
+{
+    "name": "Supermarket Price Tracker",
+    "image": "mcr.microsoft.com/devcontainers/python:3.11",
+
+    "features": {
+        "ghcr.io/devcontainers/features/node:1": {}
+    },
+
+    "postCreateCommand": "python -m venv venv && source venv/bin/activate && pip install --upgrade pip && pip install -r requirements.txt",
+
+    "postAttachCommand": "source venv/bin/activate",
+
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "python.defaultInterpreterPath": "./venv/bin/python",
+                "python.terminal.activateEnvironment": true,
+                "terminal.integrated.defaultProfile.linux": "bash"
+            },
+            "extensions": [
+                "ms-python.python",
+                "ms-python.pylint",
+                "ms-toolsai.jupyter"
+            ]
+        }
+    },
+
+    "forwardPorts": [8501],
+    "portsAttributes": {
+        "8501": {
+            "label": "Dashboard Streamlit",
+            "onAutoForward": "notify"
+        }
+    }
+}
