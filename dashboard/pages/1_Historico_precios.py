@@ -28,12 +28,8 @@ st.markdown("Selecciona un producto para ver cómo ha evolucionado su precio.")
 # =============================================================================
 # CONEXIÓN
 # =============================================================================
-@st.cache_resource
-def obtener_db():
-    inicializar_base_datos()
-    return DatabaseManager()
-
-db = obtener_db()
+inicializar_base_datos()
+db = DatabaseManager()
 
 
 # =============================================================================
