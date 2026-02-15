@@ -9,7 +9,10 @@ a lo largo del tiempo con un gráfico interactivo.
 
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 import streamlit as st
 import pandas as pd
@@ -17,7 +20,6 @@ from database.db_manager import DatabaseManager
 from database.init_db import inicializar_base_datos
 from dashboard.utils.charts import grafico_historico_precio
 
-st.set_page_config(page_title="Histórico de precios", page_icon="📈", layout="wide")
 
 st.title("📈 Histórico de precios")
 st.markdown("Selecciona un producto para ver cómo ha evolucionado su precio.")
@@ -40,10 +42,9 @@ db = obtener_db()
 col_filtro1, col_filtro2 = st.columns(2)
 
 with col_filtro1:
-    # Obtener supermercados disponibles
     df_todos = db.obtener_productos_con_precio_actual()
     supermercados = ['Todos'] + sorted(df_todos['supermercado'].unique().tolist()) if not df_todos.empty else ['Todos']
-    
+
     supermercado_sel = st.selectbox("Supermercado:", supermercados)
 
 with col_filtro2:
@@ -58,7 +59,6 @@ if busqueda:
     df_resultados = db.buscar_productos(nombre=busqueda, supermercado=super_filtro, limite=30)
 
     if not df_resultados.empty:
-        # Crear opciones legibles
         opciones = {
             f"{row['nombre']} ({row['supermercado']}) - {row['formato']}": row['id']
             for _, row in df_resultados.iterrows()
@@ -71,13 +71,11 @@ if busqueda:
 
         producto_id = opciones[seleccion]
 
-        # --- Mostrar histórico ---
         st.markdown("---")
 
         df_historico = db.obtener_historico_precios(producto_id)
 
         if not df_historico.empty:
-            # Métricas del producto
             nombre_producto = seleccion.split(" (")[0]
             precio_actual = df_historico.iloc[-1]['precio']
             precio_anterior = df_historico.iloc[-2]['precio'] if len(df_historico) > 1 else precio_actual
@@ -94,13 +92,11 @@ if busqueda:
             with col4:
                 st.metric("Registros", num_registros)
 
-            # Gráfico
             st.plotly_chart(
                 grafico_historico_precio(df_historico, nombre_producto),
                 use_container_width=True
             )
 
-            # Tabla de datos
             with st.expander("Ver datos en tabla"):
                 df_mostrar = df_historico.copy()
                 df_mostrar['precio'] = df_mostrar['precio'].apply(lambda x: f"{x:.2f} €")

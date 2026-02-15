@@ -7,14 +7,17 @@ Ejecutar con:
     streamlit run dashboard/app.py
 
 Página principal con resumen general y estadísticas.
-Las subpáginas están en dashboard/pages/.
+Las subpáginas en dashboard/pages/ se descubren automáticamente.
 """
 
 import sys
 import os
 
-# Añadir raíz del proyecto al path para imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+# Añadir raíz del proyecto al path para que los imports funcionen
+# tanto en local como en Streamlit Cloud
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 import streamlit as st
 import pandas as pd
@@ -27,7 +30,7 @@ from dashboard.utils.charts import (
 )
 
 # =============================================================================
-# CONFIGURACIÓN DE LA PÁGINA
+# CONFIGURACIÓN DE LA PÁGINA (solo aquí, nunca en las subpáginas)
 # =============================================================================
 st.set_page_config(
     page_title="Supermarket Price Tracker",
@@ -37,15 +40,9 @@ st.set_page_config(
 )
 
 # =============================================================================
-# SIDEBAR - NAVEGACIÓN
+# SIDEBAR
 # =============================================================================
 st.sidebar.title("🛒 Price Tracker")
-st.sidebar.markdown("---")
-st.sidebar.markdown("**Navegación**")
-st.sidebar.page_link("dashboard/app.py", label="🏠 Inicio", icon=None)
-st.sidebar.page_link("dashboard/pages/historico_precios.py", label="📈 Histórico de precios")
-st.sidebar.page_link("dashboard/pages/comparador.py", label="⚖️ Comparador")
-st.sidebar.page_link("dashboard/pages/favoritos.py", label="⭐ Favoritos")
 st.sidebar.markdown("---")
 st.sidebar.markdown(
     "Datos actualizados diariamente vía [GitHub Actions]"
@@ -98,9 +95,8 @@ with col_izq:
     )
 
 with col_der:
-    # Seleccionar supermercado para distribución de precios
     supermercados_disponibles = list(stats.get('productos_por_supermercado', {}).keys())
-    
+
     if supermercados_disponibles:
         super_seleccionado = st.selectbox(
             "Distribución de precios de:",
@@ -151,7 +147,7 @@ busqueda = st.text_input("Buscar producto por nombre:", placeholder="Ej: leche, 
 
 if busqueda:
     df_resultados = db.buscar_productos(nombre=busqueda, limite=20)
-    
+
     if not df_resultados.empty:
         st.dataframe(
             df_resultados[['nombre', 'supermercado', 'categoria', 'formato']],

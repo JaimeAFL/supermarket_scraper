@@ -9,7 +9,10 @@ de sus precios de un vistazo.
 
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 import streamlit as st
 import pandas as pd
@@ -17,7 +20,6 @@ from database.db_manager import DatabaseManager
 from database.init_db import inicializar_base_datos
 from dashboard.utils.charts import grafico_historico_precio
 
-st.set_page_config(page_title="Favoritos", page_icon="⭐", layout="wide")
 
 st.title("⭐ Productos favoritos")
 st.markdown("Tus productos marcados como favoritos para seguimiento rápido de precios.")
@@ -37,7 +39,7 @@ db = obtener_db()
 # =============================================================================
 # AÑADIR FAVORITO
 # =============================================================================
-with st.expander("➕ Añadir producto a favoritos"):
+with st.expander("Añadir producto a favoritos"):
     busqueda_fav = st.text_input(
         "Buscar producto:",
         placeholder="Ej: aceite de oliva, yogur...",
@@ -90,7 +92,6 @@ if not df_favoritos.empty:
                     db.eliminar_favorito(fav['id'])
                     st.rerun()
 
-            # Mini gráfico de evolución
             df_hist = db.obtener_historico_precios(fav['id'])
             if len(df_hist) > 1:
                 st.plotly_chart(
@@ -98,7 +99,7 @@ if not df_favoritos.empty:
                     use_container_width=True,
                     key=f"chart_fav_{fav['id']}"
                 )
-            
+
             st.markdown("---")
 else:
     st.info(
