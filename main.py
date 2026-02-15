@@ -13,6 +13,7 @@ Uso:
 
 import os
 import sys
+import subprocess
 import logging
 from datetime import datetime
 from dotenv import load_dotenv
@@ -23,17 +24,12 @@ from scraper.carrefour import gestion_carrefour
 from scraper.dia import gestion_dia
 from scraper.alcampo import gestion_alcampo
 from scraper.eroski import gestion_eroski
-from scraper.cookie_manager import verificar_todas_las_cookies
 from database.init_db import inicializar_base_datos
 from database.db_manager import DatabaseManager
 
 
 def setup_logging():
-    """
-    Configura el sistema de logging para consola y archivo.
-    """
     os.makedirs('logs', exist_ok=True)
-
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_file = f"logs/scraper_{timestamp}.log"
 
@@ -46,14 +42,31 @@ def setup_logging():
             logging.StreamHandler(sys.stdout)
         ]
     )
-
     return logging.getLogger(__name__)
 
 
+def _asegurar_playwright(logger):
+    """
+    Verifica que Playwright esté instalado. Si no, intenta instalarlo.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+        logger.info("Playwright disponible.")
+        return True
+    except ImportError:
+        logger.info("Playwright no encontrado. Instalando...")
+        try:
+            subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'playwright', '-q'])
+            subprocess.check_call([sys.executable, '-m', 'playwright', 'install', 'chromium'])
+            logger.info("Playwright instalado correctamente.")
+            return True
+        except Exception as e:
+            logger.warning(f"No se pudo instalar Playwright: {e}")
+            logger.warning("Carrefour, Dia, Alcampo y Eroski no estarán disponibles.")
+            return False
+
+
 def main():
-    """
-    Función principal que orquesta todo el proceso de scraping.
-    """
     # Cargar variables de entorno
     load_dotenv()
 
@@ -65,22 +78,29 @@ def main():
     logger.info(f"Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 60)
 
-    # Inicializar base de datos (crea tablas si no existen)
+    # Inicializar base de datos
     inicializar_base_datos()
     db = DatabaseManager()
 
-    # Verificar estado de las cookies
-    logger.info("")
-    logger.info("Verificando cookies...")
-    verificar_todas_las_cookies()
+    # Asegurar que Playwright está disponible
+    _asegurar_playwright(logger)
 
-    # Crear carpeta de exportación si no existe
+    # Obtener cookies automáticamente para Carrefour y Dia
+    logger.info("")
+    logger.info("Configurando cookies automáticas...")
+    try:
+        from scraper.cookie_manager import obtener_y_configurar_cookies
+        estado_cookies = obtener_y_configurar_cookies()
+        for nombre, estado in estado_cookies.items():
+            logger.info(f"  {nombre}: {estado}")
+    except Exception as e:
+        logger.warning(f"Error configurando cookies: {e}")
+
+    # Carpeta de exportación
     os.makedirs('export', exist_ok=True)
 
-    # Diccionario para acumular resultados de cada scraper
+    # Scrapers a ejecutar
     resultados = {}
-
-    # Definición de scrapers a ejecutar
     scrapers = [
         ("Mercadona", gestion_mercadona),
         ("Carrefour", gestion_carrefour),
@@ -107,19 +127,17 @@ def main():
 
         if not df.empty:
             df_total = pd.concat([df_total, df], ignore_index=True)
-
-            # Guardar en base de datos
             try:
                 resumen = db.guardar_productos(df)
                 logger.info(
-                    f"Base de datos: {resumen['productos_nuevos']} nuevos, "
+                    f"DB: {resumen['productos_nuevos']} nuevos, "
                     f"{resumen['productos_actualizados']} actualizados, "
-                    f"{resumen['precios_registrados']} precios registrados."
+                    f"{resumen['precios_registrados']} precios."
                 )
             except Exception as e:
-                logger.error(f"Error guardando {nombre} en base de datos: {e}")
+                logger.error(f"Error guardando {nombre} en DB: {e}")
 
-    # --- RESUMEN ---
+    # Resumen
     logger.info("")
     logger.info("=" * 60)
     logger.info("RESUMEN DE EXTRACCIÓN")
@@ -129,7 +147,7 @@ def main():
     logger.info(f"  {'TOTAL':12s}: {len(df_total)} productos")
     logger.info("=" * 60)
 
-    # Estadísticas de la base de datos
+    # Estadísticas DB
     try:
         stats = db.obtener_estadisticas()
         logger.info("")
@@ -142,16 +160,14 @@ def main():
     except Exception as e:
         logger.warning(f"No se pudieron obtener estadísticas: {e}")
 
-    # Exportar también a Excel (opcional, mantiene compatibilidad)
+    # Exportar a Excel (backup)
     if not df_total.empty:
         timestamp = datetime.now().strftime("%d%m%Y_%H%M%S")
         filepath = f"export/products_{timestamp}.xlsx"
         df_total.to_excel(filepath, sheet_name='Productos', index=False)
         logger.info(f"Datos exportados a: {filepath}")
 
-    # Cerrar conexión con la base de datos
     db.cerrar()
-
     logger.info("")
     logger.info("Ejecución finalizada.")
 

@@ -3,7 +3,7 @@
 """
 Scraper de Dia.
 Utiliza la API interna de dia.es.
-Requiere cookie de sesión configurada en .env (COOKIE_DIA).
+Obtiene cookies automáticamente con Playwright si no están configuradas.
 """
 
 import os
@@ -21,87 +21,70 @@ URL_CATEGORIES = (
 )
 URL_PRODUCTS_BY_CATEGORY = "https://www.dia.es/api/v1/plp-back/reduced"
 
-# Pausa entre peticiones (en segundos)
 REQUEST_DELAY = 1
 
 
 def _get_headers():
-    """
-    Construye los headers necesarios para las peticiones a Dia.
-    
-    Returns:
-        dict: Headers HTTP con la cookie de sesión.
-    """
     return {
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Encoding': 'gzip, deflate, br',
-        'Accept-Language': 'es-GB,es;q=0.9',
+        'Accept-Language': 'es-ES,es;q=0.9',
         'Cookie': os.getenv('COOKIE_DIA', ''),
-        'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-        'Sec-Ch-Ua-Mobile': '?0',
-        'Sec-Ch-Ua-Platform': '"Windows"',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1',
-        'Upgrade-Insecure-Requests': '1',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     }
 
 
+def _asegurar_cookie():
+    """
+    Comprueba si hay cookie válida. Si no, la obtiene con Playwright.
+    """
+    cookie = os.getenv('COOKIE_DIA', '')
+    if cookie and cookie != 'TU_COOKIE_DIA':
+        from scraper.cookie_manager import verificar_cookie
+        if verificar_cookie('COOKIE_DIA'):
+            return True
+
+    logger.info("Cookie de Dia no disponible. Obteniendo con Playwright...")
+    try:
+        from scraper.cookie_manager import obtener_cookie_dia
+        nueva = obtener_cookie_dia()
+        if nueva:
+            os.environ['COOKIE_DIA'] = nueva
+            return True
+    except Exception as e:
+        logger.error(f"Error obteniendo cookie automática de Dia: {e}")
+    return False
+
+
 def gestion_dia():
-    """
-    Función principal que orquesta la extracción de productos de Dia.
-    
-    Returns:
-        pd.DataFrame: DataFrame con todos los productos de Dia.
-    """
-    if not os.getenv('COOKIE_DIA') or os.getenv('COOKIE_DIA') == 'TU_COOKIE_DIA':
-        logger.error("Cookie de Dia no configurada. Consulta la guía en docs/guia_env.md")
+    if not _asegurar_cookie():
+        logger.error("No se pudo obtener cookie de Dia.")
         return pd.DataFrame()
 
     tiempo_inicio = time.time()
-
     logger.info("Iniciando extracción de Dia...")
 
     list_categories = get_ids_categorys()
-    
     if not list_categories:
-        logger.error("No se han podido obtener las categorías de Dia. La cookie puede haber caducado.")
+        logger.error("No se pudieron obtener categorías de Dia.")
         return pd.DataFrame()
-    
+
     logger.info(f"Se han encontrado {len(list_categories)} categorías.")
-    
     df_dia = get_products_by_category(list_categories)
 
-    tiempo_fin = time.time()
-    duracion = tiempo_fin - tiempo_inicio
-    minutos = int(duracion // 60)
-    segundos = int(duracion % 60)
-
-    logger.info(f"Extracción de Dia completada: {len(df_dia)} productos en {minutos}m {segundos}s")
-    
+    duracion = time.time() - tiempo_inicio
+    logger.info(f"Dia completado: {len(df_dia)} productos en {int(duracion//60)}m {int(duracion%60)}s")
     return df_dia
 
 
 def get_ids_categorys():
-    """
-    Obtiene la lista de paths de todas las categorías de Dia.
-    Navega el árbol de menú recursivamente.
-    
-    Returns:
-        list: Lista de paths de categorías (strings).
-    """
     headers = _get_headers()
-    
     try:
         response = requests.get(URL_CATEGORIES, headers=headers)
         response.raise_for_status()
         data = response.json()
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error al obtener categorías de Dia: {e}")
-        return []
-    except ValueError as e:
-        logger.error(f"Cookie de Dia caducada o respuesta inválida: {e}")
+    except Exception as e:
+        logger.error(f"Error categorías Dia: {e}")
         return []
 
     try:
@@ -109,26 +92,13 @@ def get_ids_categorys():
         nodes = _procesar_nodo(info)
         df = pd.DataFrame(nodes, columns=['id', 'parameter', 'path'])
         df = df[df['parameter'].notna()]
-
-        category_ids = df["path"].explode().dropna().astype(str).tolist()
-        return category_ids
-
-    except (KeyError, ValueError) as e:
-        logger.error(f"Error procesando categorías de Dia: {e}")
+        return df["path"].explode().dropna().astype(str).tolist()
+    except Exception as e:
+        logger.error(f"Error procesando categorías Dia: {e}")
         return []
 
 
 def _procesar_nodo(nodo, parent_path=""):
-    """
-    Recorre recursivamente el árbol de categorías de Dia.
-    
-    Args:
-        nodo (dict): Nodo del árbol de categorías.
-        parent_path (str): Path acumulado del padre.
-    
-    Returns:
-        list: Lista de tuplas (id, parameter, path).
-    """
     data = []
     for key, value in nodo.items():
         path = f"{parent_path}/{key}" if parent_path else key
@@ -144,59 +114,38 @@ def _procesar_nodo(nodo, parent_path=""):
 
 
 def get_products_by_category(list_categories):
-    """
-    Obtiene todos los productos de cada categoría.
-    
-    Args:
-        list_categories (list): Lista de paths de categorías.
-    
-    Returns:
-        pd.DataFrame: DataFrame con todos los productos.
-    """
     headers = _get_headers()
     df_products = pd.DataFrame()
 
-    for index, string_categoria in enumerate(list_categories):
-        logger.info(
-            f"{index + 1}/{len(list_categories)} - Categoría {string_categoria}"
-        )
-        
-        url = URL_PRODUCTS_BY_CATEGORY + str(string_categoria)
+    for index, cat in enumerate(list_categories):
+        logger.info(f"{index+1}/{len(list_categories)} - {cat}")
+        url = URL_PRODUCTS_BY_CATEGORY + str(cat)
 
         try:
-            response = requests.get(url, headers=headers)
-            response.raise_for_status()
-            data = response.json()
+            resp = requests.get(url, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
 
-            df_productos = pd.json_normalize(data["plp_items"], sep="_")
+            df_p = pd.json_normalize(data["plp_items"], sep="_")
+            df_p['url'] = 'https://www.dia.es' + df_p['url']
+            df_p['image'] = 'https://www.dia.es' + df_p['image']
+            df_p['categoria'] = cat
+            df_p['supermercado'] = "Dia"
 
-            df_productos['url'] = 'https://www.dia.es' + df_productos['url']
-            df_productos['image'] = 'https://www.dia.es' + df_productos['image']
-            df_productos['categoria'] = string_categoria
-            df_productos['supermercado'] = "Dia"
-
-            selected_columns = [
-                'object_id', 'display_name', 'prices_price',
-                'prices_price_per_unit', 'prices_measure_unit',
-                'categoria', 'supermercado', 'url', 'image'
-            ]
-            renamed_columns = {
-                'object_id': 'Id',
-                'display_name': 'Nombre',
-                'prices_price': 'Precio',
-                'prices_price_per_unit': 'Precio_por_unidad',
-                'prices_measure_unit': 'Formato',
-                'categoria': 'Categoria',
-                'supermercado': 'Supermercado',
-                'url': 'Url',
-                'image': 'Url_imagen'
+            cols = ['object_id', 'display_name', 'prices_price',
+                    'prices_price_per_unit', 'prices_measure_unit',
+                    'categoria', 'supermercado', 'url', 'image']
+            renames = {
+                'object_id': 'Id', 'display_name': 'Nombre',
+                'prices_price': 'Precio', 'prices_price_per_unit': 'Precio_por_unidad',
+                'prices_measure_unit': 'Formato', 'categoria': 'Categoria',
+                'supermercado': 'Supermercado', 'url': 'Url', 'image': 'Url_imagen'
             }
 
-            df_by_category = df_productos[selected_columns].rename(columns=renamed_columns)
-            df_products = pd.concat([df_products, df_by_category], ignore_index=True)
-
+            df_cat = df_p[cols].rename(columns=renames)
+            df_products = pd.concat([df_products, df_cat], ignore_index=True)
         except Exception as e:
-            logger.warning(f"Error en categoría {string_categoria}: {e}")
+            logger.warning(f"Error en categoría {cat}: {e}")
 
         time.sleep(REQUEST_DELAY)
 
