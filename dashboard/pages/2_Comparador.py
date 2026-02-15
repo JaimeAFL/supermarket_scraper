@@ -9,20 +9,20 @@ usando los grupos de equivalencia definidos (manual o automáticamente).
 
 import sys
 import os
-
-_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-if _PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, _PROJECT_ROOT)
-
 import streamlit as st
-import pandas as pd
-from database.db_manager import DatabaseManager
+from database.database_db_manager import DatabaseManager
 from database.init_db import inicializar_base_datos
 from matching.product_matcher import ProductMatcher
 from dashboard.utils.charts import (
     grafico_comparativa_supermercados,
     grafico_barras_precio_actual
 )
+
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
+
 
 
 st.title("⚖️ Comparador de supermercados")

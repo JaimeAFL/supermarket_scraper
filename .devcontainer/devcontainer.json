@@ -6,7 +6,7 @@
         "ghcr.io/devcontainers/features/node:1": {}
     },
 
-    "postCreateCommand": "python -m venv venv && source venv/bin/activate && pip install --upgrade pip && pip install -r requirements.txt",
+    "postCreateCommand": "python -m venv venv && source venv/bin/activate && pip install --upgrade pip && pip install -r requirements.txt && playwright install chromium && sudo npx playwright install-deps chromium",
 
     "postAttachCommand": "source venv/bin/activate",
 
