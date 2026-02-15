@@ -41,7 +41,7 @@ class DatabaseManager:
             db_path (str): Ruta al archivo .db. Si no se indica, usa la ruta por defecto.
         """
         self.db_path = db_path or DB_PATH
-        self.conn = sqlite3.connect(self.db_path)
+        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row  # Para acceder a columnas por nombre
         logger.info(f"Conexión abierta: {self.db_path}")
     
