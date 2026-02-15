@@ -5,12 +5,10 @@ Scraper de Alcampo.
 Usa Playwright para navegar compraonline.alcampo.es y capturar
 las respuestas de la API interna con datos de productos.
 """
-
-import os
-import json
-import pandas as pd
 import time
 import logging
+import pandas as pd
+
 
 logger = logging.getLogger(__name__)
 
