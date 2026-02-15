@@ -32,12 +32,8 @@ st.markdown("Compara el precio del mismo producto en distintos supermercados.")
 # =============================================================================
 # CONEXIÓN
 # =============================================================================
-@st.cache_resource
-def obtener_db():
-    inicializar_base_datos()
-    return DatabaseManager()
-
-db = obtener_db()
+inicializar_base_datos()
+db = DatabaseManager()
 matcher = ProductMatcher(db)
 
 

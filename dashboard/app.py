@@ -53,14 +53,8 @@ st.sidebar.markdown(
 # =============================================================================
 # CONEXIÓN A BASE DE DATOS
 # =============================================================================
-@st.cache_resource
-def obtener_db():
-    """Abre una conexión cacheada a la base de datos."""
-    inicializar_base_datos()
-    return DatabaseManager()
-
-
-db = obtener_db()
+inicializar_base_datos()
+db = DatabaseManager()
 
 
 # =============================================================================

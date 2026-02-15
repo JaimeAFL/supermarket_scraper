@@ -28,12 +28,8 @@ st.markdown("Tus productos marcados como favoritos para seguimiento rápido de p
 # =============================================================================
 # CONEXIÓN
 # =============================================================================
-@st.cache_resource
-def obtener_db():
-    inicializar_base_datos()
-    return DatabaseManager()
-
-db = obtener_db()
+inicializar_base_datos()
+db = DatabaseManager()
 
 
 # =============================================================================
