@@ -81,15 +81,15 @@ def verificar_cookie(nombre_cookie):
             try:
                 data = response.json()
                 if data:  # Cualquier JSON no vacío = cookie válida
-                    logger.info(f"{nombre_cookie}: válida (status 200, JSON OK).")
+                    logger.info("%s: válida (status 200, JSON OK).", nombre_cookie)
                     return True
             except ValueError:
                 pass
-        logger.warning(f"{nombre_cookie}: respuesta {response.status_code}, posible cookie inválida.")
+        logger.warning("%s: respuesta %d, posible cookie inválida.", nombre_cookie, response.status_code)
     except Exception as e:
-        logger.warning(f"{nombre_cookie}: error verificando - {e}")
+        logger.warning("%s: error verificando - %s", nombre_cookie, e)
 
-    logger.warning(f"{nombre_cookie}: caducada o inválida.")
+    logger.warning("%s: caducada o inválida.", nombre_cookie)
     return False
 
 
@@ -143,7 +143,7 @@ def _aceptar_cookies_banner(page):
             el = page.locator(selector).first
             if el.is_visible(timeout=500):
                 el.click()
-                logger.info(f"Banner de cookies aceptado con selector: {selector}")
+                logger.info("Banner de cookies aceptado con selector: %s", selector)
                 page.wait_for_timeout(1000)
                 return True
         except Exception:
@@ -177,7 +177,7 @@ def obtener_cookie_carrefour(codigo_postal=None):
 
     cp = codigo_postal or os.getenv('CODIGO_POSTAL', CODIGO_POSTAL_DEFAULT)
 
-    logger.info(f"Obteniendo cookie de Carrefour (CP: {cp})...")
+    logger.info("Obteniendo cookie de Carrefour (CP: %s)...", cp)
 
     api_cookies = {}
 
@@ -196,7 +196,7 @@ def obtener_cookie_carrefour(codigo_postal=None):
                     cookie_header = request.headers.get('cookie', '')
                     if cookie_header and len(cookie_header) > len(api_cookies.get('best', '')):
                         api_cookies['best'] = cookie_header
-                        logger.info(f"Cookies de API capturadas ({len(cookie_header)} chars)")
+                        logger.info("Cookies de API capturadas (%d chars)", len(cookie_header))
 
             page.on('request', capturar_cookies_api)
 
@@ -215,7 +215,7 @@ def obtener_cookie_carrefour(codigo_postal=None):
 
             # 3. Intentar configurar código postal
             # Carrefour muestra un modal pidiendo CP al entrar al supermercado
-            logger.info(f"Intentando configurar CP {cp}...")
+            logger.info("Intentando configurar CP %s...", cp)
 
             cp_configurado = False
 
@@ -258,7 +258,7 @@ def obtener_cookie_carrefour(codigo_postal=None):
                                 if btn.is_visible(timeout=500):
                                     btn.click()
                                     cp_configurado = True
-                                    logger.info(f"CP {cp} configurado con {selector} + {btn_sel}")
+                                    logger.info("CP %s configurado con %s + %s", cp, selector, btn_sel)
                                     page.wait_for_timeout(3000)
                                     break
                             except Exception:
@@ -267,7 +267,7 @@ def obtener_cookie_carrefour(codigo_postal=None):
                         if not cp_configurado:
                             page.keyboard.press('Enter')
                             cp_configurado = True
-                            logger.info(f"CP {cp} enviado con Enter")
+                            logger.info("CP %s enviado con Enter", cp)
                             page.wait_for_timeout(3000)
                         break
                 except Exception:
@@ -306,12 +306,12 @@ def obtener_cookie_carrefour(codigo_postal=None):
             # Priorizar cookies capturadas de peticiones API
             if api_cookies.get('best'):
                 cookie_string = api_cookies['best']
-                logger.info(f"Usando cookies interceptadas de API ({len(cookie_string)} chars)")
+                logger.info("Usando cookies interceptadas de API (%d chars)", len(cookie_string))
             else:
                 # Fallback: cookies del contexto
                 cookies = context.cookies()
                 cookie_string = _cookies_a_string(cookies)
-                logger.info(f"Usando cookies del contexto ({len(cookies)} cookies)")
+                logger.info("Usando cookies del contexto (%d cookies)", len(cookies))
 
             browser.close()
 
@@ -323,7 +323,7 @@ def obtener_cookie_carrefour(codigo_postal=None):
                 return ''
 
     except Exception as e:
-        logger.error(f"Error obteniendo cookie de Carrefour: {e}")
+        logger.error("Error obteniendo cookie de Carrefour: %s", e)
         return ''
 
 
@@ -348,7 +348,7 @@ def obtener_cookie_dia(codigo_postal=None):
 
     cp = codigo_postal or os.getenv('CODIGO_POSTAL', CODIGO_POSTAL_DEFAULT)
 
-    logger.info(f"Obteniendo cookie de Dia (CP: {cp})...")
+    logger.info("Obteniendo cookie de Dia (CP: %s)...", cp)
 
     try:
         with sync_playwright() as p:
@@ -387,7 +387,7 @@ def obtener_cookie_dia(codigo_postal=None):
                             page.wait_for_timeout(1500)
                             page.keyboard.press('Enter')
                             page.wait_for_timeout(3000)
-                            logger.info(f"Código postal {cp} configurado en Dia.")
+                            logger.info("Código postal %s configurado en Dia.", cp)
                             break
                     except Exception:
                         continue
@@ -412,14 +412,14 @@ def obtener_cookie_dia(codigo_postal=None):
             browser.close()
 
             if cookie_string:
-                logger.info(f"Cookie de Dia obtenida ({len(cookies)} cookies).")
+                logger.info("Cookie de Dia obtenida (%d cookies).", len(cookies))
                 return cookie_string
             else:
                 logger.warning("No se obtuvieron cookies de Dia.")
                 return ''
 
     except Exception as e:
-        logger.error(f"Error obteniendo cookie de Dia: {e}")
+        logger.error("Error obteniendo cookie de Dia: %s", e)
         return ''
 
 
@@ -450,7 +450,7 @@ def obtener_y_configurar_cookies():
             continue
 
         # 2. Intentar obtener automáticamente
-        logger.info(f"{nombre_cookie}: intentando obtención automática...")
+        logger.info("%s: intentando obtención automática...", nombre_cookie)
         cookie_nueva = funcion_obtener()
 
         if cookie_nueva:
@@ -469,7 +469,7 @@ def obtener_y_configurar_cookies():
     logger.info("")
     logger.info("Estado de cookies:")
     for nombre, estado in resultados.items():
-        logger.info(f"  {nombre}: {estado}")
+        logger.info("  %s: %s", nombre, estado)
 
     return resultados
 
@@ -490,10 +490,10 @@ def verificar_todas_las_cookies():
 
     validas = sum(1 for v in resultados.values() if v)
     total = len(resultados)
-    logger.info(f"Cookies válidas: {validas}/{total}")
+    logger.info("Cookies válidas: %d/%d", validas, total)
 
     for nombre, valida in resultados.items():
         estado = "OK" if valida else "CADUCADA/NO CONFIGURADA"
-        logger.info(f"  {nombre}: {estado}")
+        logger.info("  %s: %s", nombre, estado)
 
     return resultados
