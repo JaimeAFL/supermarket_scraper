@@ -1,279 +1,426 @@
 # -*- coding: utf-8 -*-
 
 """
-Scraper de Eroski.
-Usa Playwright para navegar supermercado.eroski.es y extraer
-datos de productos directamente del DOM.
+Scraper de Eroski (supermercado.eroski.es).
+
+Estrategia HÍBRIDA:
+    1. Playwright navega, captura cookies + descubre endpoints API.
+    2. Si descubre API → usa requests para scraping rápido.
+    3. Si no → extrae del DOM con Playwright optimizado.
 """
 
 import os
+import re
 import json
-import pandas as pd
 import time
+import hashlib
 import logging
+import requests as req_lib
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://supermercado.eroski.es"
-REQUEST_DELAY = 2
+REQUEST_DELAY = 0.01
 
 
 def gestion_eroski():
-    """
-    Función principal. Usa Playwright para navegar Eroski y extraer productos.
+    """Función principal."""
+    tiempo_inicio = time.time()
+    logger.info("Iniciando extracción de Eroski...")
 
-    Returns:
-        pd.DataFrame: DataFrame con productos de Eroski.
-    """
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
-        logger.error("Playwright no instalado. pip install playwright && playwright install chromium")
+        logger.error("Playwright no instalado.")
         return pd.DataFrame()
 
-    tiempo_inicio = time.time()
-    logger.info("Iniciando extracción de Eroski con Playwright...")
-
-    all_products = []
+    todos_los_productos = []
 
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            context = browser.new_context(
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            ctx = browser.new_context(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
                 locale='es-ES',
+                viewport={'width': 1920, 'height': 1080},
             )
-            page = context.new_page()
+            page = ctx.new_page()
 
-            # 1. Navegar a home y aceptar cookies
-            page.goto(BASE_URL, wait_until='domcontentloaded', timeout=30000)
+            # Capturar API
+            api_descubierta = {}
+            sesion_cookies = {}
+
+            def capturar_request(request):
+                c = request.headers.get('cookie', '')
+                if c and len(c) > len(sesion_cookies.get('best', '')):
+                    sesion_cookies['best'] = c
+                    sesion_cookies['headers'] = dict(request.headers)
+
+            def capturar_response(response):
+                url = response.url
+                ct = response.headers.get('content-type', '')
+                if response.status == 200 and 'json' in ct:
+                    if any(k in url.lower() for k in ['product', 'search', 'catalog', 'plp', 'listing']):
+                        try:
+                            data = response.json()
+                            if _tiene_productos(data):
+                                api_descubierta['products_url'] = url
+                                api_descubierta['products_data'] = data
+                        except Exception:
+                            pass
+                    if any(k in url.lower() for k in ['categor', 'menu', 'navigation', 'taxonomy']):
+                        try:
+                            data = response.json()
+                            api_descubierta['categories_data'] = data
+                        except Exception:
+                            pass
+
+            page.on('request', capturar_request)
+            page.on('response', capturar_response)
+
+            # ── Navegar ──────────────────────────────────
+            logger.info("Navegando a supermercado.eroski.es...")
+            page.goto(f"{BASE_URL}/", wait_until='domcontentloaded', timeout=60000)
             page.wait_for_timeout(3000)
-            _aceptar_cookies(page)
+
+            # Aceptar cookies
+            for sel in ['#onetrust-accept-btn-handler', '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll',
+                        'button:has-text("Aceptar todas")', 'button:has-text("Aceptar")']:
+                try:
+                    el = page.locator(sel).first
+                    if el.is_visible(timeout=1500):
+                        el.click()
+                        page.wait_for_timeout(1500)
+                        break
+                except Exception:
+                    continue
+
+            # Scroll en home para cargar menú
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             page.wait_for_timeout(2000)
 
-            # 2. Obtener categorías desde el menú de navegación
-            categorias = page.evaluate("""
-                () => {
-                    const links = document.querySelectorAll(
-                        'a[href*="/es/supermercado/"], nav a[href*="/categoria/"], ' +
-                        '[class*="category"] a, [class*="Category"] a, ' +
-                        '[class*="menu"] a[href*="/es/"]'
-                    );
-                    const cats = [];
-                    const seen = new Set();
-                    links.forEach(link => {
-                        const href = link.getAttribute('href');
-                        const name = link.textContent.trim();
-                        // Filtrar solo categorías de supermercado (alimentación, etc.)
-                        if (href && name && name.length > 2 && name.length < 60 &&
-                            !seen.has(href) && !href.includes('login') &&
-                            !href.includes('registro') && !href.includes('carrito')) {
-                            seen.add(href);
-                            cats.push({url: href, nombre: name});
-                        }
-                    });
-                    return cats;
+            # Obtener categorías del DOM
+            categorias = _extraer_categorias_dom(page)
+
+            # Si API descubrió categorías, usarlas
+            if not categorias and api_descubierta.get('categories_data'):
+                categorias = _parsear_categorias_api(api_descubierta['categories_data'])
+
+            logger.info(f"{len(categorias)} categorías encontradas.")
+
+            if not categorias:
+                logger.error("No se encontraron categorías de Eroski.")
+                browser.close()
+                return pd.DataFrame()
+
+            # ── Si tenemos API, usar requests ─────────────
+            cookies = sesion_cookies.get('best', '')
+
+            if api_descubierta.get('products_url') and cookies:
+                logger.info("API descubierta, cambiando a modo requests...")
+                headers_cap = sesion_cookies.get('headers', {})
+                browser.close()
+                h = {
+                    'User-Agent': headers_cap.get('user-agent', ''),
+                    'Accept': 'application/json',
+                    'Accept-Language': 'es-ES',
+                    'Cookie': cookies,
+                    'Referer': f'{BASE_URL}/',
                 }
-            """)
+                todos_los_productos = _scrape_con_requests(categorias, h, api_descubierta)
+            else:
+                # ── DOM rápido ────────────────────────────
+                logger.info("No se descubrió API, usando extracción DOM...")
+                for idx, cat in enumerate(categorias):
+                    cat_nombre = cat.get('name', 'Desconocida')
+                    cat_url = cat.get('url', '')
+                    if not cat_url:
+                        continue
+                    if cat_url.startswith('/'):
+                        cat_url = f"{BASE_URL}{cat_url}"
 
-            # Si no encontramos categorías desde el menú, intentar desde la home
-            if not categorias or len(categorias) < 3:
-                logger.info("Buscando categorías desde la página principal...")
-                categorias = _obtener_categorias_home(page)
+                    logger.info(f"{idx+1}/{len(categorias)} - {cat_nombre}")
 
-            logger.info(f"Encontradas {len(categorias)} categorías en Eroski.")
+                    try:
+                        prods = _scrape_dom_rapido(page, cat_url, cat_nombre)
+                        todos_los_productos.extend(prods)
+                        logger.info(f"  → {len(prods)} productos")
+                    except Exception as e:
+                        logger.warning(f"  Error: {e}")
 
-            # 3. Navegar cada categoría y extraer productos
-            for i, cat in enumerate(categorias):
-                cat_url = cat['url']
-                if not cat_url.startswith('http'):
-                    cat_url = BASE_URL + cat_url
+                    page.wait_for_timeout(1000)
 
-                logger.info(f"{i+1}/{len(categorias)} - {cat['nombre']}")
-
-                try:
-                    productos_cat = _extraer_productos_categoria(page, cat_url, cat['nombre'])
-                    all_products.extend(productos_cat)
-                except Exception as e:
-                    logger.warning(f"Error en categoría {cat['nombre']}: {e}")
-
-                time.sleep(REQUEST_DELAY)
-
-            browser.close()
+                browser.close()
 
     except Exception as e:
-        logger.error(f"Error general en Eroski: {e}")
+        logger.error(f"Error general Eroski: {e}")
+        return pd.DataFrame()
 
-    if all_products:
-        df = pd.DataFrame(all_products)
-        df = df.drop_duplicates(subset='Id', keep='first')
-        duracion = time.time() - tiempo_inicio
-        logger.info(f"Eroski completado: {len(df)} productos en {int(duracion//60)}m {int(duracion%60)}s")
-        return df
+    if not todos_los_productos:
+        logger.warning("Eroski: 0 productos extraídos.")
+        return pd.DataFrame()
 
-    logger.warning("No se obtuvieron productos de Eroski.")
-    return pd.DataFrame()
+    df = pd.DataFrame(todos_los_productos)
+    df = df.drop_duplicates(subset=['Id'], keep='first')
+
+    duracion = time.time() - tiempo_inicio
+    logger.info(f"Eroski completado: {len(df)} productos en {int(duracion//60)}m {int(duracion%60)}s")
+    return df
 
 
-def _obtener_categorias_home(page):
-    """Obtiene categorías navegando la home de Eroski."""
-    categorias = []
+# ─── CATEGORÍAS ───────────────────────────────────────────────────────────────
+
+def _extraer_categorias_dom(page):
+    """Extrae categorías de producto del DOM."""
     try:
-        page.goto(f"{BASE_URL}/es/supermercado/", wait_until='domcontentloaded', timeout=30000)
-        page.wait_for_timeout(3000)
+        links = page.evaluate('''() => {
+            const results = [];
+            const seen = new Set();
+            const allLinks = document.querySelectorAll('a[href]');
 
-        categorias = page.evaluate("""
-            () => {
-                const links = document.querySelectorAll('a[href]');
-                const cats = [];
-                const seen = new Set();
-                links.forEach(link => {
-                    const href = link.getAttribute('href');
-                    const name = link.textContent.trim();
-                    if (href && name && name.length > 2 && name.length < 60 &&
-                        !seen.has(href) &&
-                        (href.includes('/supermercado/') || href.includes('/categoria/')) &&
-                        !href.includes('login') && !href.includes('carrito')) {
-                        seen.add(href);
-                        cats.push({url: href, nombre: name});
-                    }
-                });
-                return cats;
+            const excluir = ['inicio','home','carrito','cuenta','ayuda','contacto',
+                'pedido','login','registro','reserva','entrega','recogida',
+                'preguntas','ver artículos','ver todos','escríbenos','lista',
+                'favoritos','newsletter','política','legal','privacidad',
+                'tienda','online','mis datos','mis pedidos','ofertas','receta',
+                'blog','prensa','empleo','empresa','tarjeta','club'];
+
+            for (const a of allLinks) {
+                const href = a.getAttribute('href');
+                const text = a.textContent.trim();
+
+                if (!href || !text || text.length < 3 || text.length > 80) continue;
+                if (seen.has(href)) continue;
+
+                const lower = text.toLowerCase();
+                if (excluir.some(e => lower.includes(e))) continue;
+
+                // Solo categorías de supermercado
+                if (href.includes('/es/supermercado/') ||
+                    href.includes('/es/alimentacion') ||
+                    href.includes('/es/bebidas') ||
+                    href.includes('/es/frescos') ||
+                    href.includes('/es/congelados') ||
+                    href.includes('/es/limpieza') ||
+                    href.includes('/es/higiene') ||
+                    href.includes('/es/mascotas') ||
+                    href.includes('/es/lacteos') ||
+                    href.includes('/es/charcuteria') ||
+                    href.includes('/es/carniceria') ||
+                    href.includes('/es/pescaderia') ||
+                    href.includes('/es/fruteria') ||
+                    href.includes('/es/panaderia') ||
+                    href.includes('/es/drogueria') ||
+                    href.includes('/es/conservas') ||
+                    href.includes('/categor') ||
+                    href.includes('/c/')) {
+                    seen.add(href);
+                    results.push({name: text, url: href});
+                }
             }
-        """)
+            return results;
+        }''')
+        return links or []
     except Exception as e:
-        logger.warning(f"Error obteniendo categorías de home: {e}")
+        logger.warning(f"Error categorías DOM: {e}")
+        return []
 
-    return categorias
+
+def _parsear_categorias_api(data):
+    """Parsea categorías desde JSON de API."""
+    resultado = []
+    _parsear_recursivo(data, resultado)
+    return resultado
 
 
-def _extraer_productos_categoria(page, url, nombre_categoria):
-    """
-    Navega a una categoría y extrae productos del DOM.
-    Gestiona paginación con scroll y botones.
-    """
+def _parsear_recursivo(data, resultado):
+    if isinstance(data, dict):
+        url = data.get('url') or data.get('link') or data.get('href', '')
+        nombre = data.get('name') or data.get('label') or data.get('title', '')
+        if url and nombre:
+            resultado.append({'name': str(nombre), 'url': str(url)})
+        for v in data.values():
+            if isinstance(v, (list, dict)):
+                _parsear_recursivo(v, resultado)
+    elif isinstance(data, list):
+        for item in data:
+            _parsear_recursivo(item, resultado)
+
+
+# ─── SCRAPING CON REQUESTS ───────────────────────────────────────────────────
+
+def _scrape_con_requests(categorias, headers, api_info):
     productos = []
+    for idx, cat in enumerate(categorias):
+        cat_nombre = cat.get('name', '')
+        cat_url = cat.get('url', '')
+        logger.info(f"{idx+1}/{len(categorias)} - {cat_nombre}")
 
-    try:
-        page.goto(url, wait_until='domcontentloaded', timeout=30000)
-        page.wait_for_timeout(3000)
+        try:
+            full_url = cat_url if cat_url.startswith('http') else f"{BASE_URL}{cat_url}"
+            resp = req_lib.get(full_url, headers=headers, timeout=15)
+            if resp.status_code == 200:
+                try:
+                    data = resp.json()
+                    prods = _extraer_productos_json(data, cat_nombre)
+                    productos.extend(prods)
+                    logger.info(f"  → {len(prods)} productos")
+                except ValueError:
+                    pass
+        except Exception as e:
+            logger.warning(f"  Error: {e}")
 
-        # Scroll para cargar productos lazy-loaded
-        max_scrolls = 10
-        for _ in range(max_scrolls):
-            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            page.wait_for_timeout(1500)
-
-            # Intentar "cargar más"
-            try:
-                boton = page.locator('button:has-text("Ver más"), button:has-text("Cargar más"), button:has-text("Mostrar más"), a:has-text("Ver más productos")').first
-                if boton.is_visible(timeout=500):
-                    boton.click()
-                    page.wait_for_timeout(2000)
-            except Exception:
-                break
-
-        # Extraer productos
-        productos_raw = page.evaluate("""
-            () => {
-                const items = [];
-                const cards = document.querySelectorAll(
-                    '[class*="product-card"], [class*="productCard"], [class*="ProductCard"], ' +
-                    'article[class*="product"], div[class*="product-item"], ' +
-                    '[data-testid*="product"], li[class*="product"]'
-                );
-
-                cards.forEach(card => {
-                    try {
-                        const nameEl = card.querySelector(
-                            '[class*="product-name"], [class*="productName"], ' +
-                            '[class*="ProductName"], h2, h3, [class*="title"]'
-                        );
-                        const name = nameEl ? nameEl.textContent.trim() : '';
-
-                        const priceEl = card.querySelector(
-                            '[class*="product-price"], [class*="productPrice"], ' +
-                            '[class*="Price"], [class*="price"]:not([class*="unit"])'
-                        );
-                        let priceText = priceEl ? priceEl.textContent.trim() : '';
-                        let price = parseFloat(priceText.replace(/[^0-9,.-]/g, '').replace(',', '.')) || 0;
-
-                        const pxuEl = card.querySelector(
-                            '[class*="price-per-unit"], [class*="pricePerUnit"], ' +
-                            '[class*="unit-price"], [class*="unitPrice"]'
-                        );
-                        let pxu = pxuEl ? pxuEl.textContent.trim() : '';
-
-                        const formatEl = card.querySelector(
-                            '[class*="format"], [class*="weight"], [class*="size"], ' +
-                            '[class*="package"]'
-                        );
-                        let format = formatEl ? formatEl.textContent.trim() : '';
-
-                        const linkEl = card.querySelector('a[href]');
-                        let url = linkEl ? linkEl.getAttribute('href') : '';
-
-                        const imgEl = card.querySelector('img');
-                        let img = imgEl ? (imgEl.getAttribute('src') || imgEl.getAttribute('data-src') || '') : '';
-
-                        if (name && price > 0) {
-                            items.push({
-                                nombre: name,
-                                precio: price,
-                                precio_por_unidad: pxu,
-                                formato: format,
-                                url: url,
-                                imagen: img
-                            });
-                        }
-                    } catch (e) {}
-                });
-                return items;
-            }
-        """)
-
-        for prod in productos_raw:
-            prod_url = prod['url']
-            if prod_url and not prod_url.startswith('http'):
-                prod_url = BASE_URL + prod_url
-            img_url = prod['imagen']
-            if img_url and not img_url.startswith('http'):
-                img_url = BASE_URL + img_url
-
-            productos.append({
-                'Id': f"eroski_{hash(prod['nombre'] + str(prod['precio'])) % 10**8}",
-                'Nombre': prod['nombre'],
-                'Precio': prod['precio'],
-                'Precio_por_unidad': prod['precio_por_unidad'],
-                'Formato': prod['formato'],
-                'Categoria': nombre_categoria,
-                'Supermercado': 'Eroski',
-                'Url': prod_url,
-                'Url_imagen': img_url,
-            })
-
-    except Exception as e:
-        logger.warning(f"Error extrayendo productos de {url}: {e}")
+        time.sleep(REQUEST_DELAY)
 
     return productos
 
 
-def _aceptar_cookies(page):
-    """Intenta aceptar el banner de cookies."""
-    selectores = [
-        '#onetrust-accept-btn-handler',
-        'button:has-text("Aceptar todas")',
-        'button:has-text("Aceptar todo")',
-        'button:has-text("Aceptar")',
-        'button:has-text("Acepto")',
-        '[data-testid="cookie-accept"]',
-    ]
-    for selector in selectores:
-        try:
-            el = page.locator(selector).first
-            if el.is_visible(timeout=500):
-                el.click()
-                page.wait_for_timeout(1000)
-                return
-        except Exception:
+# ─── SCRAPING DOM RÁPIDO ─────────────────────────────────────────────────────
+
+def _scrape_dom_rapido(page, url, cat_nombre):
+    productos = []
+
+    try:
+        page.goto(url, wait_until='domcontentloaded', timeout=20000)
+        page.wait_for_timeout(2000)
+
+        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        page.wait_for_timeout(1500)
+
+        items = page.evaluate('''() => {
+            const results = [];
+            const selectors = [
+                '[data-testid*="product"]',
+                '[class*="product-card"]',
+                '[class*="productCard"]',
+                'article[class*="product"]',
+                '[class*="product-tile"]',
+                '[class*="product-item"]',
+                '.e-product',
+                'li[class*="product"]',
+            ];
+
+            let els = [];
+            for (const sel of selectors) {
+                els = document.querySelectorAll(sel);
+                if (els.length > 0) break;
+            }
+
+            for (const el of els) {
+                const nameEl = el.querySelector('h2, h3, [class*="title"], [class*="name"]');
+                const name = nameEl ? nameEl.textContent.trim() : '';
+
+                const priceEl = el.querySelector('[class*="price"]');
+                const price = priceEl ? priceEl.textContent.trim() : '';
+
+                const linkEl = el.querySelector('a[href]');
+                const url = linkEl ? linkEl.getAttribute('href') : '';
+
+                const imgEl = el.querySelector('img');
+                const img = imgEl ? (imgEl.src || imgEl.getAttribute('data-src') || '') : '';
+
+                if (name && price) {
+                    results.push({name, price, url: url || '', image: img || ''});
+                }
+            }
+            return results;
+        }''')
+
+        for item in items:
+            precio = _parsear_precio(item['price'])
+            if precio is None:
+                continue
+
+            url_p = item['url']
+            if url_p and url_p.startswith('/'):
+                url_p = f"{BASE_URL}{url_p}"
+
+            pid = hashlib.md5(f"{item['name']}_{precio}".encode()).hexdigest()[:12]
+            productos.append({
+                'Id': pid, 'Nombre': item['name'], 'Precio': precio,
+                'Precio_por_unidad': precio, 'Formato': '',
+                'Categoria': cat_nombre, 'Supermercado': 'Eroski',
+                'Url': url_p, 'Url_imagen': item['image'],
+            })
+
+    except Exception as e:
+        logger.warning(f"Error DOM: {e}")
+
+    return productos
+
+
+# ─── UTILIDADES ───────────────────────────────────────────────────────────────
+
+def _tiene_productos(data):
+    if isinstance(data, dict):
+        for k in ['results', 'products', 'items', 'content', 'hits']:
+            v = data.get(k)
+            if isinstance(v, list) and len(v) > 2:
+                return True
+    return False
+
+
+def _extraer_productos_json(data, cat_nombre):
+    productos = []
+    items = None
+
+    if isinstance(data, dict):
+        for k in ['results', 'products', 'items', 'content', 'hits', 'data']:
+            v = data.get(k)
+            if isinstance(v, list) and v:
+                items = v
+                break
+    elif isinstance(data, list):
+        items = data
+
+    if not items:
+        return []
+
+    for item in items:
+        if not isinstance(item, dict):
             continue
+        nombre = item.get('display_name') or item.get('name') or item.get('title') or ''
+        if not nombre:
+            continue
+
+        pid = item.get('id') or item.get('product_id') or item.get('sku') or hashlib.md5(nombre.encode()).hexdigest()[:12]
+        precio = None
+        for k in ['price', 'unit_price', 'unitPrice', 'currentPrice', 'salePrice']:
+            v = item.get(k)
+            if v is not None:
+                try:
+                    precio = float(str(v).replace(',', '.').replace('€', '').strip())
+                    break
+                except (ValueError, TypeError):
+                    continue
+
+        if precio is None:
+            continue
+
+        url_p = item.get('url') or item.get('link') or ''
+        if url_p and url_p.startswith('/'):
+            url_p = f"{BASE_URL}{url_p}"
+
+        img = item.get('image') or item.get('thumbnail') or ''
+        if isinstance(img, dict):
+            img = img.get('url') or ''
+
+        productos.append({
+            'Id': str(pid), 'Nombre': nombre, 'Precio': precio,
+            'Precio_por_unidad': precio, 'Formato': '',
+            'Categoria': cat_nombre, 'Supermercado': 'Eroski',
+            'Url': url_p, 'Url_imagen': str(img),
+        })
+
+    return productos
+
+
+def _parsear_precio(texto):
+    try:
+        m = re.search(r'(\d+[.,]\d{2})', texto)
+        if m:
+            return float(m.group(1).replace(',', '.'))
+    except Exception:
+        pass
+    return None

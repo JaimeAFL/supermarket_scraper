@@ -85,7 +85,8 @@ def main():
     # Asegurar que Playwright está disponible
     _asegurar_playwright(logger)
 
-    # Obtener cookies automáticamente para Carrefour y Dia
+    # Obtener cookie automática para Dia (único super que la necesita vía requests)
+    # Carrefour, Alcampo y Eroski usan Playwright directo (no necesitan cookies manuales)
     logger.info("")
     logger.info("Configurando cookies automáticas...")
     try:
