@@ -440,7 +440,6 @@ def obtener_y_configurar_cookies():
     resultados = {}
 
     configuracion = {
-        'COOKIE_CARREFOUR': obtener_cookie_carrefour,
         'COOKIE_DIA': obtener_cookie_dia,
     }
 

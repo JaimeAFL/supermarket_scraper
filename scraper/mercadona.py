@@ -5,11 +5,11 @@ Scraper de Mercadona.
 Utiliza la API interna de tienda.mercadona.es.
 No requiere cookies ni autenticación.
 """
-
-import requests
-import pandas as pd
 import time
 import logging
+import requests
+import pandas as pd
+
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ URL_CATEGORIES = "https://tienda.mercadona.es/api/categories/"
 URL_PRODUCTS_BY_CATEGORY = "https://tienda.mercadona.es/api/categories/"
 
 # Pausa entre peticiones para no saturar el servidor (en segundos)
-REQUEST_DELAY = 1
+REQUEST_DELAY = 0.01
 
 
 def gestion_mercadona():

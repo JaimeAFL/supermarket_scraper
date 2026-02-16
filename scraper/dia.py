@@ -5,12 +5,11 @@ Scraper de Dia.
 Utiliza la API interna de dia.es.
 Obtiene cookies automáticamente con Playwright si no están configuradas.
 """
-
+import time
+import logging
 import os
 import requests
 import pandas as pd
-import time
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +20,7 @@ URL_CATEGORIES = (
 )
 URL_PRODUCTS_BY_CATEGORY = "https://www.dia.es/api/v1/plp-back/reduced"
 
-REQUEST_DELAY = 1
+REQUEST_DELAY = 0.01
 
 
 def _get_headers():
