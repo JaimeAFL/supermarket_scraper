@@ -21,7 +21,7 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://supermercado.eroski.es"
-REQUEST_DELAY = 0.01
+REQUEST_DELAY = 0.5
 
 
 def gestion_eroski():
@@ -107,7 +107,7 @@ def gestion_eroski():
             if not categorias and api_descubierta.get('categories_data'):
                 categorias = _parsear_categorias_api(api_descubierta['categories_data'])
 
-            logger.info(f"{len(categorias)} categorías encontradas.")
+            logger.info("%d categorías encontradas.", {len(categorias)})
 
             if not categorias:
                 logger.error("No se encontraron categorías de Eroski.")
@@ -140,21 +140,21 @@ def gestion_eroski():
                     if cat_url.startswith('/'):
                         cat_url = f"{BASE_URL}{cat_url}"
 
-                    logger.info(f"{idx+1}/{len(categorias)} - {cat_nombre}")
+                    logger.info("%d/%d - %s", idx+1, len(categorias), cat_nombre)
 
                     try:
                         prods = _scrape_dom_rapido(page, cat_url, cat_nombre)
                         todos_los_productos.extend(prods)
-                        logger.info(f"  → {len(prods)} productos")
+                        logger.info("  → %d productos", len(prods))
                     except Exception as e:
-                        logger.warning(f"  Error: {e}")
+                        logger.warning("  Error: %s", e)
 
                     page.wait_for_timeout(1000)
 
                 browser.close()
 
     except Exception as e:
-        logger.error(f"Error general Eroski: {e}")
+        logger.error("Error general Eroski: %s", e)
         return pd.DataFrame()
 
     if not todos_los_productos:
@@ -165,7 +165,7 @@ def gestion_eroski():
     df = df.drop_duplicates(subset=['Id'], keep='first')
 
     duracion = time.time() - tiempo_inicio
-    logger.info(f"Eroski completado: {len(df)} productos en {int(duracion//60)}m {int(duracion%60)}s")
+    logger.info("Eroski completado: %d productos en %dm %ds", len(df), int(duracion // 60), int(duracion % 60))
     return df
 
 
@@ -223,7 +223,7 @@ def _extraer_categorias_dom(page):
         }''')
         return links or []
     except Exception as e:
-        logger.warning(f"Error categorías DOM: {e}")
+        logger.warning("Error categorías DOM: %s", e)
         return []
 
 
@@ -255,7 +255,7 @@ def _scrape_con_requests(categorias, headers, api_info):
     for idx, cat in enumerate(categorias):
         cat_nombre = cat.get('name', '')
         cat_url = cat.get('url', '')
-        logger.info(f"{idx+1}/{len(categorias)} - {cat_nombre}")
+        logger.info("%d/%d - %s", idx+1, len(categorias), cat_nombre)
 
         try:
             full_url = cat_url if cat_url.startswith('http') else f"{BASE_URL}{cat_url}"
@@ -265,11 +265,11 @@ def _scrape_con_requests(categorias, headers, api_info):
                     data = resp.json()
                     prods = _extraer_productos_json(data, cat_nombre)
                     productos.extend(prods)
-                    logger.info(f"  → {len(prods)} productos")
+                    logger.info("  → %d productos", len(prods))
                 except ValueError:
                     pass
         except Exception as e:
-            logger.warning(f"  Error: {e}")
+            logger.warning("  Error: %s", e)
 
         time.sleep(REQUEST_DELAY)
 
@@ -345,7 +345,7 @@ def _scrape_dom_rapido(page, url, cat_nombre):
             })
 
     except Exception as e:
-        logger.warning(f"Error DOM: {e}")
+        logger.warning("Error DOM: %s", e)
 
     return productos
 

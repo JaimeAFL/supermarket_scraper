@@ -5,11 +5,11 @@ Scraper de Mercadona.
 Utiliza la API interna de tienda.mercadona.es.
 No requiere cookies ni autenticación.
 """
-import time
-import logging
+
 import requests
 import pandas as pd
-
+import time
+import logging
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ URL_CATEGORIES = "https://tienda.mercadona.es/api/categories/"
 URL_PRODUCTS_BY_CATEGORY = "https://tienda.mercadona.es/api/categories/"
 
 # Pausa entre peticiones para no saturar el servidor (en segundos)
-REQUEST_DELAY = 0.01
+REQUEST_DELAY = 1
 
 
 def gestion_mercadona():
@@ -37,7 +37,7 @@ def gestion_mercadona():
         logger.error("No se han podido obtener las categorías de Mercadona.")
         return pd.DataFrame()
     
-    logger.info(f"Se han encontrado {len(list_categories)} categorías.")
+    logger.info("Se han encontrado %d categorías.", len(list_categories))
     
     df_mercadona = get_products_by_category(list_categories)
 
@@ -46,7 +46,7 @@ def gestion_mercadona():
     minutos = int(duracion // 60)
     segundos = int(duracion % 60)
 
-    logger.info(f"Extracción de Mercadona completada: {len(df_mercadona)} productos en {minutos}m {segundos}s")
+    logger.info("Extracción de Mercadona completada: %d productos en %dm %ds", len(df_mercadona), minutos, segundos)
     
     return df_mercadona
 
@@ -74,10 +74,10 @@ def get_ids_categorys():
         return category_ids
     
     except requests.exceptions.RequestException as e:
-        logger.error(f"Error al obtener categorías de Mercadona: {e}")
+        logger.error("Error al obtener categorías de Mercadona: %s", e)
         return []
     except (KeyError, ValueError) as e:
-        logger.error(f"Error al procesar categorías de Mercadona: {e}")
+        logger.error("Error al procesar categorías de Mercadona: %s", e)
         return []
 
 
@@ -138,9 +138,9 @@ def get_products_by_category(list_categories):
             df_products = pd.concat([df_products, df_by_category], ignore_index=True)
 
         except requests.exceptions.RequestException as e:
-            logger.warning(f"Error en categoría {id_categoria}: {e}")
+            logger.warning("Error en categoría %s: %s", id_categoria, e)
         except (KeyError, ValueError) as e:
-            logger.warning(f"Error procesando categoría {id_categoria}: {e}")
+            logger.warning("Error procesando categoría %s: %s", id_categoria, e)
 
         time.sleep(REQUEST_DELAY)
 

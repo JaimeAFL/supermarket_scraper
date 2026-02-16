@@ -61,7 +61,7 @@ def _asegurar_playwright(logger):
             logger.info("Playwright instalado correctamente.")
             return True
         except Exception as e:
-            logger.warning(f"No se pudo instalar Playwright: {e}")
+            logger.warning("No se pudo instalar Playwright: %s", e)
             logger.warning("Carrefour, Dia, Alcampo y Eroski no estarán disponibles.")
             return False
 
@@ -75,7 +75,7 @@ def main():
 
     logger.info("=" * 60)
     logger.info("SUPERMARKET PRICE TRACKER - Inicio de ejecución")
-    logger.info(f"Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info("Fecha: %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     logger.info("=" * 60)
 
     # Inicializar base de datos
@@ -93,9 +93,9 @@ def main():
         from scraper.cookie_manager import obtener_y_configurar_cookies
         estado_cookies = obtener_y_configurar_cookies()
         for nombre, estado in estado_cookies.items():
-            logger.info(f"  {nombre}: {estado}")
+            logger.info("  %s: %s", nombre, estado)
     except Exception as e:
-        logger.warning(f"Error configurando cookies: {e}")
+        logger.warning("Error configurando cookies: %s", e)
 
     # Carpeta de exportación
     os.makedirs('export', exist_ok=True)
@@ -121,7 +121,7 @@ def main():
         try:
             df = funcion_scraper()
         except Exception as e:
-            logger.error(f"Error ejecutando scraper de {nombre}: {e}")
+            logger.error("Error ejecutando scraper de %s: %s", nombre, e)
             df = pd.DataFrame()
 
         resultados[nombre] = len(df)
@@ -136,7 +136,7 @@ def main():
                     f"{resumen['precios_registrados']} precios."
                 )
             except Exception as e:
-                logger.error(f"Error guardando {nombre} en DB: {e}")
+                logger.error("Error guardando %s en DB: %s", nombre, e)
 
     # Resumen
     logger.info("")
@@ -144,8 +144,8 @@ def main():
     logger.info("RESUMEN DE EXTRACCIÓN")
     logger.info("=" * 60)
     for nombre, cantidad in resultados.items():
-        logger.info(f"  {nombre:12s}: {cantidad} productos")
-    logger.info(f"  {'TOTAL':12s}: {len(df_total)} productos")
+        logger.info("  %-12s: %d productos", nombre, cantidad)
+    logger.info("  %-12s: %d productos", "TOTAL", len(df_total))
     logger.info("=" * 60)
 
     # Estadísticas DB
@@ -153,20 +153,20 @@ def main():
         stats = db.obtener_estadisticas()
         logger.info("")
         logger.info("ESTADO DE LA BASE DE DATOS")
-        logger.info(f"  Productos totales:    {stats['total_productos']}")
-        logger.info(f"  Registros de precios: {stats['total_registros_precios']}")
-        logger.info(f"  Supermercados:        {stats['total_supermercados']}")
-        logger.info(f"  Primera captura:      {stats['primera_captura']}")
-        logger.info(f"  Última captura:       {stats['ultima_captura']}")
+        logger.info("  Productos totales:    %s", stats["total_productos"])
+        logger.info("  Registros de precios: %s", stats["total_registros_precios"])
+        logger.info("  Supermercados:        %s", stats["total_supermercados"])
+        logger.info("  Primera captura:      %s", stats["primera_captura"])
+        logger.info("  Última captura:       %s", stats["ultima_captura"])
     except Exception as e:
-        logger.warning(f"No se pudieron obtener estadísticas: {e}")
+        logger.warning("No se pudieron obtener estadísticas: %s", e)
 
     # Exportar a Excel (backup)
     if not df_total.empty:
         timestamp = datetime.now().strftime("%d%m%Y_%H%M%S")
         filepath = f"export/products_{timestamp}.xlsx"
         df_total.to_excel(filepath, sheet_name='Productos', index=False)
-        logger.info(f"Datos exportados a: {filepath}")
+        logger.info("Datos exportados a: %s", filepath)
 
     db.cerrar()
     logger.info("")

@@ -4,24 +4,141 @@
 Scraper de Carrefour.
 
 Estrategia HÍBRIDA (rápida):
-    1. Playwright abre navegador → navega al supermercado → intercepta
-       cookies+headers de las peticiones API reales.
+    1. Playwright abre navegador → obtiene cookies de sesión
+       (session_id, cf_clearance, salepoint).
     2. Cierra Playwright (~30s).
-    3. Usa requests (rápido) con esas cookies para scraping masivo.
+    3. Usa la API Empathy.co con requests:
+       /search-api/query/v1/search?query=...&catalog=food&store=XXXXX
+    4. Itera por términos de búsqueda, paginando resultados.
+
+Estructura JSON de la API:
+    {
+      "content": {
+        "docs": [
+          {
+            "active_price": 0.88,
+            "display_name": "Leche semidesnatada Carrefour brik 1 l.",
+            "product_id": "521007071",
+            "brand": "CARREFOUR",
+            "ean13": "8431876011937",
+            "image_path": "https://static.carrefour.es/hd_350x_/...",
+            "price_per_unit_text": "0,88 €/l",
+            "measure_unit": "l",
+            "url": "/supermercado/leche-semidesnatada-.../R-521007071/p",
+            "average_weight": 1000,
+            "list_price": 0.88,
+          }
+        ]
+      },
+      "numFound": 734
+    }
 """
 
 import os
 import re
-import json
 import time
-import hashlib
 import logging
 import requests as req_lib
 import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-REQUEST_DELAY = 0.01
+REQUEST_DELAY = 0.3
+
+# API de búsqueda Empathy.co
+SEARCH_API = "https://www.carrefour.es/search-api/query/v1/search"
+
+# Términos de búsqueda que cubren el catálogo de supermercado
+CATEGORIAS_BUSQUEDA = [
+    # Frescos
+    ("Frutas y verduras", "frutas verduras"),
+    ("Frutas", "manzana plátano naranja"),
+    ("Verduras", "tomate lechuga pepino zanahoria"),
+    ("Ensaladas", "ensalada preparada"),
+    ("Carnicería", "pollo ternera cerdo"),
+    ("Carne picada", "carne picada hamburguesa"),
+    ("Aves", "pollo pavo"),
+    ("Cerdo", "lomo chuleta cerdo"),
+    ("Ternera", "ternera filete"),
+    ("Cordero", "cordero"),
+    ("Pescadería", "merluza salmón atún"),
+    ("Marisco", "gamba langostino mejillón"),
+    ("Charcutería", "jamón serrano ibérico"),
+    ("Embutidos", "chorizo salchichón fuet"),
+    ("Quesos", "queso manchego brie"),
+    # Lácteos
+    ("Leche", "leche"),
+    ("Yogures", "yogur"),
+    ("Mantequilla y nata", "mantequilla nata"),
+    ("Postres lácteos", "flan natillas"),
+    ("Huevos", "huevos"),
+    # Panadería
+    ("Pan", "pan barra molde"),
+    ("Bollería", "croissant magdalena"),
+    # Despensa
+    ("Cereales", "cereales desayuno"),
+    ("Galletas", "galletas"),
+    ("Pasta", "pasta espagueti macarrones"),
+    ("Arroz", "arroz"),
+    ("Legumbres", "legumbres lentejas garbanzos"),
+    ("Aceite", "aceite oliva girasol"),
+    ("Vinagre", "vinagre"),
+    ("Conservas", "conservas atún sardinas"),
+    ("Conservas vegetales", "tomate frito pimiento"),
+    ("Salsas", "salsa mayonesa ketchup"),
+    ("Condimentos", "especias pimienta orégano"),
+    ("Sopas y caldos", "caldo sopa"),
+    ("Harinas", "harina levadura"),
+    # Desayuno y merienda
+    ("Café", "café cápsulas"),
+    ("Infusiones", "infusión té manzanilla"),
+    ("Cacao", "cacao colacao"),
+    ("Chocolate", "chocolate tableta"),
+    ("Mermelada", "mermelada miel"),
+    # Dulces y snacks
+    ("Dulces", "dulces caramelos"),
+    ("Snacks", "patatas fritas snacks"),
+    ("Frutos secos", "frutos secos almendras nueces"),
+    # Congelados
+    ("Congelados", "congelados"),
+    ("Helados", "helado"),
+    ("Pizza congelada", "pizza congelada"),
+    ("Verduras congeladas", "verduras congeladas"),
+    ("Pescado congelado", "pescado congelado"),
+    # Bebidas
+    ("Agua", "agua mineral"),
+    ("Refrescos", "coca cola fanta"),
+    ("Zumos", "zumo"),
+    ("Cerveza", "cerveza"),
+    ("Vino tinto", "vino tinto"),
+    ("Vino blanco", "vino blanco"),
+    ("Bebidas espirituosas", "whisky ron ginebra vodka"),
+    # Hogar y limpieza
+    ("Detergente", "detergente lavadora"),
+    ("Suavizante", "suavizante"),
+    ("Lavavajillas", "lavavajillas"),
+    ("Lejía y limpiadores", "lejía limpiador"),
+    ("Papel higiénico", "papel higiénico"),
+    ("Papel cocina", "papel cocina servilletas"),
+    ("Bolsas basura", "bolsas basura"),
+    # Higiene y belleza
+    ("Gel y jabón", "gel ducha jabón"),
+    ("Champú", "champú"),
+    ("Desodorante", "desodorante"),
+    ("Pasta de dientes", "pasta dientes cepillo"),
+    ("Cuidado facial", "crema facial"),
+    ("Compresas y tampones", "compresas tampones"),
+    ("Pañuelos", "pañuelos"),
+    # Bebé
+    ("Pañales", "pañales"),
+    ("Alimentación bebé", "potito papilla bebé"),
+    # Mascotas
+    ("Comida perro", "comida perro pienso"),
+    ("Comida gato", "comida gato"),
+]
+
+MAX_ROWS = 48
+MAX_PAGES = 20  # 48 * 20 = 960 productos máx por búsqueda
 
 
 def gestion_carrefour():
@@ -29,339 +146,344 @@ def gestion_carrefour():
     tiempo_inicio = time.time()
     logger.info("Iniciando extracción de Carrefour...")
 
-    # Paso 1: Sesión válida con Playwright (~30s)
+    # Paso 1: Sesión con Playwright
     sesion = _obtener_sesion_playwright()
     if not sesion:
         logger.error("No se pudo obtener sesión de Carrefour.")
         return pd.DataFrame()
 
-    cookies = sesion['cookies']
-    headers = sesion['headers']
-    logger.info(f"Sesión obtenida ({len(cookies)} chars de cookies).")
+    cookies_str = sesion["cookies"]
+    store_id = sesion["store_id"]
+    logger.info("Sesión obtenida. Tienda: %s", store_id)
 
-    # Paso 2: Categorías vía API
-    categorias = _obtener_categorias(cookies, headers)
-    if not categorias:
-        logger.warning("API de categorías falló, usando fallback...")
-        categorias = _categorias_fallback()
+    # Paso 2: Búsqueda masiva con requests
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "*/*",
+        "Accept-Language": "es-ES,es;q=0.9",
+        "Cookie": cookies_str,
+        "Referer": "https://www.carrefour.es/supermercado/",
+        "x-origin": "https://www.carrefour.es",
+    }
 
-    logger.info(f"{len(categorias)} categorías encontradas.")
+    todos = []
+    ids_vistos = set()
 
-    # Paso 3: Scraping masivo con requests
-    df_products = pd.DataFrame()
-
-    for idx, cat in enumerate(categorias):
-        cat_nombre = cat.get('name', 'Desconocida')
-        logger.info(f"{idx+1}/{len(categorias)} - {cat_nombre}")
+    for cat_nombre, query in CATEGORIAS_BUSQUEDA:
+        logger.info("Buscando: %s", cat_nombre)
 
         try:
-            df_cat = _obtener_productos_categoria(cat, cookies, headers)
-            if not df_cat.empty:
-                df_products = pd.concat([df_products, df_cat], ignore_index=True)
-                logger.info(f"  → {len(df_cat)} productos")
+            productos = _buscar_productos(query, store_id, headers, cat_nombre)
+            nuevos = 0
+            for p in productos:
+                if p["Id"] not in ids_vistos:
+                    ids_vistos.add(p["Id"])
+                    todos.append(p)
+                    nuevos += 1
+            logger.info("  → %d encontrados, %d nuevos", len(productos), nuevos)
         except Exception as e:
-            logger.warning(f"  Error: {e}")
+            logger.warning("  Error buscando '%s': %s", cat_nombre, e)
 
         time.sleep(REQUEST_DELAY)
 
-    if not df_products.empty:
-        df_products = df_products.drop_duplicates(subset=['Id'], keep='first')
+    if not todos:
+        logger.warning("Carrefour: 0 productos extraídos.")
+        return pd.DataFrame()
+
+    df = pd.DataFrame(todos)
 
     duracion = time.time() - tiempo_inicio
-    logger.info(f"Carrefour completado: {len(df_products)} productos en {int(duracion//60)}m {int(duracion%60)}s")
-    return df_products
+    logger.info(
+        "Carrefour completado: %d productos en %dm %ds",
+        len(df), int(duracion // 60), int(duracion % 60)
+    )
+    return df
 
 
-# ─── PASO 1: SESIÓN PLAYWRIGHT ───────────────────────────────────────────────
+# ─── SESIÓN PLAYWRIGHT ────────────────────────────────────────────────────────
 
 def _obtener_sesion_playwright():
+    """Obtiene cookies de sesión válidas con Playwright."""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
         logger.error("Playwright no instalado.")
         return None
 
-    cp = os.getenv('CODIGO_POSTAL', '28001')
-    api_capturas = []
+    cp = os.getenv("CODIGO_POSTAL", "08001")
 
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             ctx = browser.new_context(
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
-                locale='es-ES',
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+                locale="es-ES",
             )
             page = ctx.new_page()
 
-            def capturar(request):
-                url = request.url
-                if any(k in url for k in ['cloud-api', 'carrefour.es/api', 'search-api', 'categories-api']):
-                    c = request.headers.get('cookie', '')
-                    if c:
-                        api_capturas.append({'cookies': c, 'headers': dict(request.headers)})
-
-            page.on('request', capturar)
-
-            # Navegar
-            page.goto('https://www.carrefour.es/supermercado/', wait_until='domcontentloaded', timeout=60000)
-            page.wait_for_timeout(3000)
+            logger.info("Navegando a carrefour.es/supermercado/...")
+            page.goto(
+                "https://www.carrefour.es/supermercado/",
+                wait_until="domcontentloaded",
+                timeout=60000,
+            )
+            page.wait_for_timeout(4000)
 
             # Aceptar cookies banner
-            for sel in ['#onetrust-accept-btn-handler', 'button:has-text("Aceptar todas")', 'button:has-text("Aceptar")']:
+            for sel in [
+                "#onetrust-accept-btn-handler",
+                'button:has-text("Aceptar todas")',
+                'button:has-text("Aceptar")',
+            ]:
                 try:
                     el = page.locator(sel).first
                     if el.is_visible(timeout=1500):
                         el.click()
-                        page.wait_for_timeout(1500)
+                        page.wait_for_timeout(2000)
                         break
                 except Exception:
                     continue
 
             # CP
-            for sel in ['input[placeholder*="postal"]', 'input[name*="postal"]', 'input[data-testid*="postal"]']:
+            for sel in [
+                'input[placeholder*="postal"]',
+                'input[name*="postal"]',
+            ]:
                 try:
                     el = page.locator(sel).first
-                    if el.is_visible(timeout=1500):
+                    if el.is_visible(timeout=2000):
                         el.fill(cp)
                         page.wait_for_timeout(1000)
-                        page.keyboard.press('Enter')
+                        page.keyboard.press("Enter")
                         page.wait_for_timeout(3000)
+                        logger.info("CP %s configurado.", cp)
                         break
                 except Exception:
                     continue
 
-            # Forzar peticiones API navegando a una categoría
+            # Navegar a categoría para generar cookie salepoint
             try:
-                page.goto('https://www.carrefour.es/supermercado/alimentacion/cat20002/c',
-                          wait_until='domcontentloaded', timeout=30000)
-                page.wait_for_timeout(4000)
+                page.goto(
+                    "https://www.carrefour.es/supermercado/alimentacion/cat20002/c",
+                    wait_until="domcontentloaded",
+                    timeout=30000,
+                )
+                page.wait_for_timeout(3000)
             except Exception:
                 pass
 
-            # Scroll para más peticiones
-            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            page.wait_for_timeout(2000)
+            # Extraer cookies
+            cookies_list = ctx.cookies()
+            cookie_str = "; ".join(
+                "%s=%s" % (c["name"], c["value"]) for c in cookies_list
+            )
 
-            # Obtener la mejor captura
-            mejor = max(api_capturas, key=lambda x: len(x['cookies']), default=None)
+            # Extraer store_id del cookie salepoint
+            store_id = ""
+            for c in cookies_list:
+                if c["name"] == "salepoint":
+                    parts = c["value"].split("|")
+                    if parts:
+                        store_id = parts[0]
+                    break
 
-            if mejor:
-                sesion = {
-                    'cookies': mejor['cookies'],
-                    'headers': {
-                        'User-Agent': mejor['headers'].get('user-agent', ''),
-                        'Accept': 'application/json',
-                        'Accept-Language': 'es-ES',
-                        'Referer': 'https://www.carrefour.es/supermercado/',
-                    },
-                }
-            else:
-                # Fallback: cookies del contexto
-                cc = ctx.cookies()
-                sesion = {
-                    'cookies': "; ".join(f"{c['name']}={c['value']}" for c in cc),
-                    'headers': {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
-                        'Accept': 'application/json',
-                        'Accept-Language': 'es-ES',
-                        'Referer': 'https://www.carrefour.es/supermercado/',
-                    },
-                }
+            if not store_id:
+                store_id = "005290"  # Default
 
             browser.close()
-            return sesion if sesion.get('cookies') else None
+
+            if not cookie_str:
+                return None
+
+            return {"cookies": cookie_str, "store_id": store_id}
 
     except Exception as e:
-        logger.error(f"Error Playwright: {e}")
+        logger.error("Error Playwright: %s", e)
         return None
 
 
-# ─── PASO 2: CATEGORÍAS ──────────────────────────────────────────────────────
+# ─── BÚSQUEDA DE PRODUCTOS ────────────────────────────────────────────────────
 
-def _obtener_categorias(cookies, headers):
-    h = {**headers, 'Cookie': cookies}
-    for url in [
-        'https://www.carrefour.es/cloud-api/categories-api/v1/categories/menu/',
-        'https://www.carrefour.es/cloud-api/categories-api/v1/categories/',
-    ]:
-        try:
-            resp = req_lib.get(url, headers=h, timeout=15)
-            if resp.status_code == 200:
-                cats = _parsear_arbol(resp.json())
-                if cats:
-                    return cats
-        except Exception:
-            continue
-    return []
-
-
-def _parsear_arbol(data, res=None):
-    if res is None:
-        res = []
-    if isinstance(data, list):
-        for item in data:
-            _parsear_arbol(item, res)
-    elif isinstance(data, dict):
-        url = data.get('url') or data.get('link') or ''
-        nombre = data.get('name') or data.get('label') or ''
-        cat_id = data.get('id') or ''
-        if nombre and url and '/supermercado/' in str(url):
-            res.append({'id': str(cat_id), 'name': str(nombre), 'url': str(url)})
-        for k in ['children', 'subcategories', 'categories', 'items', 'sections']:
-            if k in data and data[k]:
-                _parsear_arbol(data[k], res)
-    return res
-
-
-def _categorias_fallback():
-    b = 'https://www.carrefour.es/supermercado'
-    return [
-        {'id': 'cat20002', 'name': 'Alimentación', 'url': f'{b}/alimentacion/cat20002/c'},
-        {'id': 'cat20090', 'name': 'Bebidas', 'url': f'{b}/bebidas/cat20090/c'},
-        {'id': 'cat20017', 'name': 'Frescos', 'url': f'{b}/frescos/cat20017/c'},
-        {'id': 'cat20057', 'name': 'Congelados', 'url': f'{b}/congelados/cat20057/c'},
-        {'id': 'cat20003', 'name': 'Lácteos', 'url': f'{b}/lacteos/cat20003/c'},
-        {'id': 'cat20113', 'name': 'Panadería', 'url': f'{b}/panaderia-y-bolleria/cat20113/c'},
-        {'id': 'cat110', 'name': 'Limpieza y hogar', 'url': f'{b}/limpieza-y-hogar/cat110/c'},
-        {'id': 'cat120', 'name': 'Higiene y belleza', 'url': f'{b}/higiene-y-belleza/cat120/c'},
-        {'id': 'cat20310', 'name': 'Bebé', 'url': f'{b}/bebe/cat20310/c'},
-        {'id': 'cat20340', 'name': 'Mascotas', 'url': f'{b}/mascotas/cat20340/c'},
-    ]
-
-
-# ─── PASO 3: PRODUCTOS POR CATEGORÍA ─────────────────────────────────────────
-
-def _obtener_productos_categoria(cat, cookies, headers):
-    h = {**headers, 'Cookie': cookies}
-    cat_url = cat.get('url', '')
-
-    cat_match = re.search(r'(cat\d+)', cat_url)
-    cat_id = cat_match.group(1) if cat_match else cat.get('id', '')
-    if not cat_id:
-        return pd.DataFrame()
-
+def _buscar_productos(query, store_id, headers, cat_nombre):
+    """Busca productos con la API Empathy.co, paginando."""
     productos = []
-    offset = 0
-    page_size = 24
+    start = 0
 
-    for _ in range(40):  # Máximo 40 páginas = 960 productos/categoría
-        api_urls = [
-            f'https://www.carrefour.es/cloud-api/plp-food-search-api/v2/search?offset={offset}&limit={page_size}&sort=relevance&categories={cat_id}',
-            f'https://www.carrefour.es/cloud-api/search-api/v2/search?offset={offset}&limit={page_size}&sort=relevance&categories={cat_id}',
-        ]
+    for _ in range(MAX_PAGES):
+        params = {
+            "internal": "true",
+            "query": query,
+            "instance": "x-carrefour",
+            "catalog": "food",
+            "store": store_id,
+            "lang": "es",
+            "start": str(start),
+            "rows": str(MAX_ROWS),
+            "scope": "mobile",
+        }
 
-        data = None
-        for api_url in api_urls:
+        try:
+            resp = req_lib.get(
+                SEARCH_API, params=params, headers=headers, timeout=15
+            )
+
+            if resp.status_code != 200:
+                logger.warning(
+                    "  API status %d para '%s'", resp.status_code, query
+                )
+                break
+
+            data = resp.json()
+
+            # Productos en content.docs
+            docs = []
+            content = data.get("content")
+            if isinstance(content, dict):
+                docs = content.get("docs", [])
+            if not docs:
+                break
+
+            for doc in docs:
+                prod = _parsear_doc(doc, cat_nombre)
+                if prod:
+                    productos.append(prod)
+
+            # Paginación: numFound en raíz
+            total = data.get("numFound", 0)
             try:
-                resp = req_lib.get(api_url, headers=h, timeout=15)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    break
-            except Exception:
-                continue
+                total = int(total)
+            except (ValueError, TypeError):
+                total = 0
 
-        if not data:
-            break
+            start += MAX_ROWS
+            if start >= total or len(docs) < MAX_ROWS:
+                break
 
-        items = _extraer_items(data)
-        if not items:
-            break
-
-        for item in items:
-            prod = _parsear_producto(item, cat.get('name', ''))
-            if prod:
-                productos.append(prod)
-
-        total = data.get('total', data.get('totalCount', data.get('totalResults', 0)))
-        offset += page_size
-        if offset >= total or len(items) < page_size:
+        except Exception as e:
+            logger.warning("  Error request: %s", e)
             break
 
         time.sleep(REQUEST_DELAY)
 
-    return pd.DataFrame(productos) if productos else pd.DataFrame()
+    return productos
 
 
-def _extraer_items(data):
-    if isinstance(data, list):
-        return data
-    if isinstance(data, dict):
-        for k in ['results', 'products', 'items', 'content', 'productCards', 'hits']:
-            v = data.get(k)
-            if isinstance(v, list) and v:
-                return v
-        for k in ['data', 'response']:
-            v = data.get(k)
-            if isinstance(v, dict):
-                for sk in ['results', 'products', 'items']:
-                    sv = v.get(sk)
-                    if isinstance(sv, list) and sv:
-                        return sv
-    return None
-
-
-def _parsear_producto(item, cat_nombre):
-    if not isinstance(item, dict):
+def _parsear_doc(doc, cat_nombre):
+    """Parsea un documento de la API Empathy.co."""
+    if not isinstance(doc, dict):
         return None
 
-    nombre = item.get('display_name') or item.get('name') or item.get('title') or ''
+    # Nombre
+    nombre = doc.get("display_name", "")
     if not nombre:
         return None
 
-    pid = item.get('id') or item.get('product_id') or item.get('productId') or item.get('sku') or hashlib.md5(nombre.encode()).hexdigest()[:12]
-
-    precio = None
-    for k in ['price', 'unit_price', 'unitPrice', 'currentPrice', 'active_price', 'salePrice']:
-        v = item.get(k)
-        if v is not None:
-            try:
-                precio = float(str(v).replace(',', '.').replace('€', '').strip())
-                break
-            except (ValueError, TypeError):
-                continue
-
-    if precio is None:
-        for ok in ['price_instructions', 'priceInstructions', 'prices', 'priceInfo']:
-            obj = item.get(ok)
-            if isinstance(obj, dict):
-                for sk in ['unit_price', 'unitPrice', 'price', 'current']:
-                    v = obj.get(sk)
-                    if v is not None:
-                        try:
-                            precio = float(str(v).replace(',', '.').replace('€', '').strip())
-                            break
-                        except (ValueError, TypeError):
-                            continue
-                if precio:
-                    break
-
-    if precio is None:
+    # ID (product_id es el principal)
+    pid = doc.get("product_id") or doc.get("ean13") or ""
+    if not pid:
         return None
 
-    precio_u = precio
-    for k in ['price_per_unit', 'pricePerUnit', 'bulk_price']:
-        v = item.get(k)
-        if v is not None:
-            try:
-                precio_u = float(re.sub(r'[€/kgl\s]', '', str(v).replace(',', '.')))
-                break
-            except (ValueError, TypeError):
-                continue
+    # Precio actual
+    precio = doc.get("active_price")
+    if precio is None:
+        precio = doc.get("app_price")
+    if precio is None:
+        return None
+    try:
+        precio = float(precio)
+    except (ValueError, TypeError):
+        return None
 
-    fmt = item.get('size_format') or item.get('format') or item.get('packSize') or item.get('weight') or ''
-    url_p = item.get('url') or item.get('link') or item.get('pdpUrl') or ''
-    if url_p and url_p.startswith('/'):
-        url_p = f"https://www.carrefour.es{url_p}"
+    # Precio por unidad (de price_per_unit_text: "0,88 €/l")
+    precio_u = _parsear_precio_por_unidad(doc.get("price_per_unit_text", ""))
+    if precio_u is None:
+        precio_u = precio
 
-    img = item.get('image') or item.get('thumbnail') or item.get('imageUrl') or ''
-    if isinstance(img, dict):
-        img = img.get('url') or img.get('src') or ''
-    if isinstance(img, list) and img:
-        img = img[0] if isinstance(img[0], str) else img[0].get('url', '')
+    # Formato: construir desde measure_unit + average_weight
+    formato = _construir_formato(doc)
+
+    # URL
+    url_p = doc.get("url", "")
+    if url_p and not url_p.startswith("http"):
+        url_p = "https://www.carrefour.es%s" % url_p
+
+    # Imagen
+    imagen = doc.get("image_path", "")
+
+    # Marca
+    marca = doc.get("brand", "")
 
     return {
-        'Id': str(pid), 'Nombre': nombre, 'Precio': precio,
-        'Precio_por_unidad': precio_u, 'Formato': str(fmt),
-        'Categoria': cat_nombre, 'Supermercado': 'Carrefour',
-        'Url': url_p, 'Url_imagen': str(img),
+        "Id": str(pid),
+        "Nombre": nombre,
+        "Precio": precio,
+        "Precio_por_unidad": precio_u,
+        "Formato": formato,
+        "Categoria": cat_nombre,
+        "Supermercado": "Carrefour",
+        "Url": url_p,
+        "Url_imagen": imagen,
+        "Marca": marca,
     }
+
+
+def _parsear_precio_por_unidad(texto):
+    """Parsea '0,88 €/l' → 0.88"""
+    if not texto:
+        return None
+    try:
+        m = re.search(r"(\d+[.,]\d+)", texto)
+        if m:
+            return float(m.group(1).replace(",", "."))
+    except Exception:
+        pass
+    return None
+
+
+def _construir_formato(doc):
+    """Construye string de formato: '1 l', '500 g', etc."""
+    peso = doc.get("average_weight")
+    unidad = doc.get("measure_unit", "")
+    factor = doc.get("unit_conversion_factor")
+
+    if factor and unidad:
+        try:
+            factor = float(factor)
+            if unidad == "l":
+                if factor >= 1:
+                    return "%g l" % factor
+                return "%g ml" % (factor * 1000)
+            elif unidad in ("kg", "g"):
+                if factor >= 1:
+                    return "%g kg" % factor
+                return "%g g" % (factor * 1000)
+            else:
+                return "%g %s" % (factor, unidad)
+        except (ValueError, TypeError):
+            pass
+
+    if peso and unidad:
+        try:
+            peso = float(peso)
+            if unidad == "l":
+                if peso >= 1000:
+                    return "%g l" % (peso / 1000)
+                return "%g ml" % peso
+            elif unidad in ("kg", "g"):
+                if peso >= 1000:
+                    return "%g kg" % (peso / 1000)
+                return "%g g" % peso
+            else:
+                return "%g %s" % (peso, unidad)
+        except (ValueError, TypeError):
+            pass
+
+    return ""

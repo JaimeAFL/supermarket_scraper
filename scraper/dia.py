@@ -5,11 +5,12 @@ Scraper de Dia.
 Utiliza la API interna de dia.es.
 Obtiene cookies automáticamente con Playwright si no están configuradas.
 """
-import time
-import logging
+
 import os
 import requests
 import pandas as pd
+import time
+import logging
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ URL_CATEGORIES = (
 )
 URL_PRODUCTS_BY_CATEGORY = "https://www.dia.es/api/v1/plp-back/reduced"
 
-REQUEST_DELAY = 0.01
+REQUEST_DELAY = 1
 
 
 def _get_headers():
@@ -51,7 +52,7 @@ def _asegurar_cookie():
             os.environ['COOKIE_DIA'] = nueva
             return True
     except Exception as e:
-        logger.error(f"Error obteniendo cookie automática de Dia: {e}")
+        logger.error("Error obteniendo cookie automática de Dia: %s", e)
     return False
 
 
@@ -68,11 +69,11 @@ def gestion_dia():
         logger.error("No se pudieron obtener categorías de Dia.")
         return pd.DataFrame()
 
-    logger.info(f"Se han encontrado {len(list_categories)} categorías.")
+    logger.info("Se han encontrado %d categorías.", len(list_categories))
     df_dia = get_products_by_category(list_categories)
 
     duracion = time.time() - tiempo_inicio
-    logger.info(f"Dia completado: {len(df_dia)} productos en {int(duracion//60)}m {int(duracion%60)}s")
+    logger.info("Dia completado: %d productos en %dm %ds", len(df_dia), int(duracion // 60), int(duracion % 60))
     return df_dia
 
 
@@ -83,7 +84,7 @@ def get_ids_categorys():
         response.raise_for_status()
         data = response.json()
     except Exception as e:
-        logger.error(f"Error categorías Dia: {e}")
+        logger.error("Error categorías Dia: %s", e)
         return []
 
     try:
@@ -93,7 +94,7 @@ def get_ids_categorys():
         df = df[df['parameter'].notna()]
         return df["path"].explode().dropna().astype(str).tolist()
     except Exception as e:
-        logger.error(f"Error procesando categorías Dia: {e}")
+        logger.error("Error procesando categorías Dia: %s", e)
         return []
 
 
@@ -117,7 +118,7 @@ def get_products_by_category(list_categories):
     df_products = pd.DataFrame()
 
     for index, cat in enumerate(list_categories):
-        logger.info(f"{index+1}/{len(list_categories)} - {cat}")
+        logger.info("%d/%d - %s", index + 1, len(list_categories), cat)
         url = URL_PRODUCTS_BY_CATEGORY + str(cat)
 
         try:
@@ -144,7 +145,7 @@ def get_products_by_category(list_categories):
             df_cat = df_p[cols].rename(columns=renames)
             df_products = pd.concat([df_products, df_cat], ignore_index=True)
         except Exception as e:
-            logger.warning(f"Error en categoría {cat}: {e}")
+            logger.warning("Error en categoría %s: %s", cat, e)
 
         time.sleep(REQUEST_DELAY)
 
