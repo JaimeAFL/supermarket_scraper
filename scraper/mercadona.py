@@ -17,7 +17,7 @@ URL_CATEGORIES = "https://tienda.mercadona.es/api/categories/"
 URL_PRODUCTS_BY_CATEGORY = "https://tienda.mercadona.es/api/categories/"
 
 # Pausa entre peticiones para no saturar el servidor (en segundos)
-REQUEST_DELAY = 1
+REQUEST_DELAY = 0.01
 
 
 def gestion_mercadona():

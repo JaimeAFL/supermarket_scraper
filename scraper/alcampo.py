@@ -37,7 +37,7 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-REQUEST_DELAY = 0.5
+REQUEST_DELAY = 0.01
 BASE_URL = "https://www.compraonline.alcampo.es"
 
 # Categorías hoja de alimentación/hogar (retailerId, nombre)

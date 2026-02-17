@@ -43,7 +43,7 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-REQUEST_DELAY = 0.3
+REQUEST_DELAY = 0.01
 
 # API de búsqueda Empathy.co
 SEARCH_API = "https://www.carrefour.es/search-api/query/v1/search"

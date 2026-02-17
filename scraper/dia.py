@@ -21,7 +21,7 @@ URL_CATEGORIES = (
 )
 URL_PRODUCTS_BY_CATEGORY = "https://www.dia.es/api/v1/plp-back/reduced"
 
-REQUEST_DELAY = 1
+REQUEST_DELAY = 0.01
 
 
 def _get_headers():
