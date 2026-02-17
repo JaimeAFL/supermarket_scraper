@@ -33,7 +33,7 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-REQUEST_DELAY = 0.5
+REQUEST_DELAY = 0.01
 BASE_URL = "https://supermercado.eroski.es"
 SEARCH_URL = "%s/es/search/results/" % BASE_URL
 PRODUCTS_PER_PAGE = 20
