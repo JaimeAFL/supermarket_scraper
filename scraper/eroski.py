@@ -3,172 +3,70 @@
 """
 Scraper de Eroski (supermercado.eroski.es).
 
-Estrategia HÍBRIDA:
-    1. Playwright abre navegador → obtiene cookies de sesión (~30s).
-    2. Cierra Playwright.
-    3. Con requests, hace búsquedas por términos y parsea el HTML.
-    4. Los datos de producto están embebidos en atributos GA4:
-       price, item_name, item_id, item_brand.
+Estrategia COMBINADA:
+    Fase 1 – Mapeo de categorías:
+        Navega a la home y extrae TODOS los links del mega-menú.
+        Cada URL /es/supermercado/{id}-{slug}/ da un mapeo:
+            id_numérico → "nombre legible"
+        Esto se usa para traducir los IDs de GA4 a nombres reales.
 
-Estructura HTML de un producto:
-    <div class="product-item-lineal item-type-1 ...">
-      <div class="product-item big-item">
-        ... data-ga4 con JSON: {price, item_name, item_id, item_brand} ...
-        <a href=".../{item_id}-{slug}/">
-        <img src="https://supermercado.eroski.es//images/{item_id}.jpg">
-        <span class="price-offer-description">1,19 €/litro</span>
-      </div>
-    </div>
+    Fase 2 – Extracción por búsqueda:
+        Navega a /es/search/results/?q=TERMINO
+        Hace scroll para cargar lazy/infinite scroll.
+        Extrae productos del DOM + datos GA4 (precio, marca, categorías).
 
-URL búsqueda: /es/search/results/?q=TERM&suggestionsFilter=false&offset=N
+    Fase 3 – Categorización:
+        GA4 da item_category / item_category2 / item_category3 como IDs.
+        Se cruzan con el mapeo de Fase 1 para obtener:
+        "Frescos > Frutas > Naranjas y otros cítricos"
 """
 
-import json
 import os
 import re
 import time
 import logging
-import requests as req_lib
 import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-REQUEST_DELAY = 0.01
 BASE_URL = "https://supermercado.eroski.es"
-SEARCH_URL = "%s/es/search/results/" % BASE_URL
-PRODUCTS_PER_PAGE = 20
-MAX_PAGES_PER_SEARCH = 30  # 600 productos máx por búsqueda
 
-# Términos de búsqueda para cubrir catálogo
+# Términos de búsqueda que cubren todo el supermercado
 TERMINOS_BUSQUEDA = [
-    ("Leche", "leche"),
-    ("Yogur", "yogur"),
-    ("Queso", "queso"),
-    ("Huevos", "huevos"),
-    ("Mantequilla", "mantequilla"),
-    ("Nata y crema", "nata crema"),
-    ("Frutas", "frutas"),
-    ("Verduras", "verduras"),
-    ("Carne", "carne"),
-    ("Pollo", "pollo"),
-    ("Cerdo", "cerdo"),
-    ("Ternera", "ternera"),
-    ("Pescado", "pescado"),
-    ("Marisco", "marisco"),
-    ("Jamón", "jamón"),
-    ("Embutido", "embutido chorizo salchichón"),
-    ("Pan", "pan"),
-    ("Bollería", "bollería croissant"),
-    ("Cereales", "cereales"),
-    ("Galletas", "galletas"),
-    ("Pasta", "pasta espagueti macarrón"),
-    ("Arroz", "arroz"),
-    ("Legumbres", "legumbres lentejas garbanzos"),
-    ("Aceite", "aceite oliva girasol"),
-    ("Vinagre", "vinagre"),
-    ("Sal y especias", "sal pimienta especias"),
-    ("Conservas", "conservas atún sardinas"),
-    ("Tomate", "tomate frito triturado"),
-    ("Salsas", "salsa mayonesa ketchup"),
-    ("Café", "café cápsulas"),
-    ("Té e infusiones", "té infusiones manzanilla"),
-    ("Cacao y chocolate", "cacao chocolate"),
-    ("Miel y mermelada", "miel mermelada"),
-    ("Azúcar", "azúcar edulcorante"),
-    ("Harina", "harina"),
-    ("Snacks", "snacks patatas fritas"),
-    ("Frutos secos", "frutos secos almendras nueces"),
-    ("Congelados", "congelados"),
-    ("Pizza", "pizza"),
-    ("Helados", "helados"),
-    ("Agua", "agua mineral"),
-    ("Refrescos", "refresco cola"),
-    ("Zumos", "zumo"),
-    ("Cerveza", "cerveza"),
-    ("Vino", "vino tinto blanco"),
-    ("Bebidas espirituosas", "whisky ron ginebra vodka"),
-    ("Detergente", "detergente lavadora"),
-    ("Suavizante", "suavizante"),
-    ("Lejía y limpiadores", "lejía limpiador"),
-    ("Lavavajillas", "lavavajillas"),
-    ("Papel higiénico", "papel higiénico"),
-    ("Servilletas", "servilletas"),
-    ("Gel de baño", "gel baño ducha"),
-    ("Champú", "champú"),
-    ("Desodorante", "desodorante"),
-    ("Pasta de dientes", "pasta dientes dental"),
-    ("Pañales", "pañales"),
-    ("Comida mascotas", "comida perro gato mascota"),
+    "leche", "yogur", "queso", "huevos", "mantequilla", "nata",
+    "frutas", "verduras", "ensalada", "patatas",
+    "carne", "pollo", "cerdo", "ternera", "cordero",
+    "pescado", "marisco", "salmon", "atun", "merluza",
+    "jamon", "embutido", "chorizo", "salchichon",
+    "pan", "cereales", "galletas", "bolleria",
+    "pasta", "arroz", "legumbres", "lentejas",
+    "aceite", "vinagre", "sal", "harina",
+    "conservas", "tomate", "salsa", "caldo",
+    "cafe", "te", "infusion", "cacao",
+    "chocolate", "miel", "mermelada", "azucar",
+    "patatas fritas", "frutos secos", "snacks",
+    "congelados", "pizza", "helados", "croquetas",
+    "agua", "refresco", "zumo", "cerveza", "vino",
+    "detergente", "suavizante", "lejia", "lavavajillas",
+    "papel higienico", "gel ducha", "champu", "jabon",
+    "desodorante", "pasta dientes", "crema facial",
+    "panales", "comida perro", "comida gato",
 ]
 
 
 def gestion_eroski():
     """Función principal."""
-    tiempo_inicio = time.time()
+    t0 = time.time()
     logger.info("Iniciando extracción de Eroski...")
 
-    # Paso 1: Sesión con Playwright
-    cookies_str = _obtener_cookies_playwright()
-    if not cookies_str:
-        logger.error("No se pudieron obtener cookies de Eroski.")
-        return pd.DataFrame()
-
-    # Paso 2: Búsquedas por términos
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        ),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "es-ES,es;q=0.9",
-        "Cookie": cookies_str,
-    }
-
-    todos = []
-    ids_vistos = set()
-
-    for cat_nombre, termino in TERMINOS_BUSQUEDA:
-        logger.info("Buscando: '%s' (%s)", termino, cat_nombre)
-
-        try:
-            productos = _buscar_termino(termino, cat_nombre, headers)
-            nuevos = 0
-            for p in productos:
-                if p["Id"] not in ids_vistos:
-                    ids_vistos.add(p["Id"])
-                    todos.append(p)
-                    nuevos += 1
-            logger.info("  → %d encontrados, %d nuevos (total: %d)",
-                        len(productos), nuevos, len(ids_vistos))
-        except Exception as e:
-            logger.warning("  Error buscando '%s': %s", termino, e)
-
-        time.sleep(REQUEST_DELAY)
-
-    if not todos:
-        logger.warning("Eroski: 0 productos extraídos.")
-        return pd.DataFrame()
-
-    df = pd.DataFrame(todos)
-
-    duracion = time.time() - tiempo_inicio
-    logger.info(
-        "Eroski completado: %d productos en %dm %ds",
-        len(df), int(duracion // 60), int(duracion % 60)
-    )
-    return df
-
-
-# ─── COOKIES PLAYWRIGHT ───────────────────────────────────────────────────────
-
-def _obtener_cookies_playwright():
-    """Obtiene cookies de sesión con Playwright."""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
         logger.error("Playwright no instalado.")
-        return None
+        return pd.DataFrame()
+
+    todos = []
+    ids_vistos = set()
 
     try:
         with sync_playwright() as p:
@@ -183,268 +81,365 @@ def _obtener_cookies_playwright():
             )
             page = ctx.new_page()
 
+            # ── Setup ─────────────────────────────────────────
             logger.info("Navegando a supermercado.eroski.es...")
             page.goto(
-                "%s/" % BASE_URL,
+                "%s/es/supermercado/" % BASE_URL,
                 wait_until="domcontentloaded",
                 timeout=60000,
             )
-            page.wait_for_timeout(5000)
+            page.wait_for_timeout(4000)
+            _aceptar_cookies(page)
 
-            # Aceptar cookies banner
-            for sel in [
-                "#onetrust-accept-btn-handler",
-                'button:has-text("Aceptar")',
-                'button:has-text("Aceptar todas las cookies")',
-                'button:has-text("Aceptar todo")',
-            ]:
+            # ── Fase 1: Mapeo de categorías ───────────────────
+            cat_map = _construir_mapa_categorias(page)
+            logger.info(
+                "Mapa de categorías: %d IDs mapeados.", len(cat_map)
+            )
+
+            # ── Fase 2: Búsqueda por términos ────────────────
+            for termino in TERMINOS_BUSQUEDA:
+                logger.info("Buscando: '%s'", termino)
                 try:
-                    el = page.locator(sel).first
-                    if el.is_visible(timeout=1500):
-                        el.click()
-                        page.wait_for_timeout(2000)
-                        break
-                except Exception:
-                    continue
-
-            # Configurar CP si hay popup
-            cp = os.getenv("CODIGO_POSTAL", "28001")
-            try:
-                el = page.locator(
-                    'input[placeholder*="postal"], '
-                    'input[name*="postal"], '
-                    'input[id*="postal"]'
-                ).first
-                if el.is_visible(timeout=2000):
-                    el.fill(cp)
-                    page.wait_for_timeout(1000)
-                    page.keyboard.press("Enter")
-                    page.wait_for_timeout(3000)
-            except Exception:
-                pass
-
-            # Navegar a búsqueda para generar sesión completa
-            page.goto(
-                "%s/es/search/results/?q=leche&suggestionsFilter=false"
-                % BASE_URL,
-                wait_until="domcontentloaded",
-                timeout=30000,
-            )
-            page.wait_for_timeout(3000)
-
-            # Extraer cookies
-            cookies_list = ctx.cookies()
-            cookie_str = "; ".join(
-                "%s=%s" % (c["name"], c["value"]) for c in cookies_list
-            )
+                    productos = _buscar_productos(
+                        page, termino, cat_map
+                    )
+                    nuevos = 0
+                    for prod in productos:
+                        if prod["Id"] not in ids_vistos:
+                            ids_vistos.add(prod["Id"])
+                            todos.append(prod)
+                            nuevos += 1
+                    logger.info(
+                        "  → %d encontrados, %d nuevos (total: %d)",
+                        len(productos), nuevos, len(ids_vistos),
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "  Error buscando '%s': %s",
+                        termino, str(e)[:80],
+                    )
 
             browser.close()
-            return cookie_str if cookie_str else None
 
     except Exception as e:
         logger.error("Error Playwright Eroski: %s", e)
-        return None
+        return pd.DataFrame()
+
+    if not todos:
+        logger.warning("Eroski: 0 productos extraídos.")
+        return pd.DataFrame()
+
+    df = pd.DataFrame(todos)
+    dur = time.time() - t0
+    logger.info(
+        "Eroski completado: %d productos en %dm %ds",
+        len(df), int(dur // 60), int(dur % 60),
+    )
+    return df
 
 
-# ─── BÚSQUEDA Y EXTRACCIÓN ────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════
+#  Fase 1: Mapa de categorías
+# ══════════════════════════════════════════════════════════════
 
-def _buscar_termino(termino, cat_nombre, headers):
-    """Busca un término y pagina por todos los resultados."""
-    productos = []
-    offset = 0
+def _construir_mapa_categorias(page):
+    """Extrae TODOS los links /es/supermercado/ del mega-menú
+    y construye {id_numérico: nombre_legible}."""
 
-    for _page in range(MAX_PAGES_PER_SEARCH):
-        params = {
-            "q": termino,
-            "suggestionsFilter": "false",
-        }
-        if offset > 0:
-            params["offset"] = str(offset)
+    try:
+        raw = page.evaluate("""
+            () => {
+                const links = document.querySelectorAll(
+                    'a[href*="/es/supermercado/"]'
+                );
+                const urls = new Set();
+                for (const a of links) {
+                    const href = a.getAttribute('href') || '';
+                    if (href.includes('productdetail')) continue;
+                    if (href.includes('login')) continue;
+                    if (href.includes(':')) continue;
+                    urls.add(href);
+                }
+                return [...urls];
+            }
+        """)
+    except Exception:
+        raw = []
 
+    cat_map = {}
+
+    for url in raw:
+        # Extraer cada segmento {id}-{slug}
+        segments = re.findall(r'/(\d+)-([^/]+)', url)
+        for num_id, slug in segments:
+            if num_id not in cat_map:
+                name = slug.replace('-', ' ').strip().capitalize()
+                cat_map[num_id] = name
+
+    # Construir también rutas completas para cada hoja
+    # (se almacenan con el ID de la hoja como clave especial)
+    for url in raw:
+        segments = re.findall(r'/(\d+)-([^/]+)', url)
+        if len(segments) >= 2:
+            # Construir ruta: "Padre > Hijo" o "Abuelo > Padre > Hijo"
+            names = [
+                s[1].replace('-', ' ').strip().capitalize()
+                for s in segments
+            ]
+            path = " > ".join(names)
+            leaf_id = segments[-1][0]
+            cat_map["path_%s" % leaf_id] = path
+
+    if not cat_map:
+        logger.warning("No se pudo construir mapa de categorías.")
+
+    return cat_map
+
+
+def _resolver_categoria(cat_map, cat1, cat2, cat3, fallback):
+    """Resuelve la categoría más específica usando el mapa.
+    Prioridad: cat3 (más específica) > cat2 > cat1.
+    Busca primero la ruta completa (path_ID), luego el nombre simple.
+    """
+    for cat_id in [cat3, cat2, cat1]:
+        if not cat_id:
+            continue
+        # Intentar ruta completa
+        path_key = "path_%s" % cat_id
+        if path_key in cat_map:
+            return cat_map[path_key]
+        # Nombre simple
+        if cat_id in cat_map:
+            return cat_map[cat_id]
+
+    return fallback
+
+
+# ══════════════════════════════════════════════════════════════
+#  Fase 2: Búsqueda y extracción
+# ══════════════════════════════════════════════════════════════
+
+def _aceptar_cookies(page):
+    for sel in [
+        "#onetrust-accept-btn-handler",
+        'button:has-text("Aceptar")',
+        'button:has-text("Aceptar todas las cookies")',
+    ]:
         try:
-            resp = req_lib.get(
-                SEARCH_URL, params=params, headers=headers, timeout=20
-            )
-            if resp.status_code != 200:
-                logger.warning("  Status %d en offset %d", resp.status_code, offset)
+            el = page.locator(sel).first
+            if el.is_visible(timeout=2000):
+                el.click()
+                page.wait_for_timeout(2000)
+                return
+        except Exception:
+            continue
+
+
+def _buscar_productos(page, termino, cat_map):
+    """Navega a búsqueda, hace scroll, extrae productos del DOM."""
+    url = "%s/es/search/results/?q=%s&suggestionsFilter=false" % (
+        BASE_URL, termino,
+    )
+
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+    except Exception:
+        return []
+    page.wait_for_timeout(3000)
+
+    # Scroll para cargar lazy / infinite scroll
+    prev_count = 0
+    stable = 0
+    for _ in range(50):
+        count = page.evaluate(
+            "document.querySelectorAll('.product-item-lineal').length"
+        )
+        if count == prev_count:
+            stable += 1
+            if stable >= 3:
                 break
+        else:
+            stable = 0
+        prev_count = count
+        page.evaluate("window.scrollBy(0, 2000)")
+        page.wait_for_timeout(800)
 
-            html = resp.text
-            page_products = _extraer_productos_html(html, cat_nombre)
+    # Extraer productos del DOM + GA4
+    try:
+        raw_list = page.evaluate("""
+            () => {
+                const prods = [];
+                const items = document.querySelectorAll(
+                    '.product-item-lineal:not(.criteoItem)'
+                );
 
-            if not page_products:
-                break
+                for (const item of items) {
+                    try {
+                        const pDiv = item.querySelector('.product-item');
+                        if (!pDiv) continue;
 
-            productos.extend(page_products)
+                        // ID y URL
+                        const link = pDiv.querySelector(
+                            'a[href*="/productdetail/"]'
+                        );
+                        if (!link) continue;
+                        const href = link.getAttribute('href') || '';
+                        const idMatch = href.match(/productdetail\\/(\d+)/);
+                        if (!idMatch) continue;
+                        const id = idMatch[1];
 
-            # Extraer total de resultados
-            total = _extraer_total(html)
-            offset += PRODUCTS_PER_PAGE
+                        // Nombre
+                        let name = '';
+                        const descLink = pDiv.querySelector(
+                            '.product-description a'
+                        );
+                        if (descLink) {
+                            name = descLink.getAttribute('title') ||
+                                   descLink.textContent.trim();
+                        }
+                        if (!name) {
+                            const dt = pDiv.querySelector(
+                                '.description-text'
+                            );
+                            if (dt) name = dt.textContent.trim();
+                        }
 
-            if total and offset >= total:
-                break
-            if len(page_products) < PRODUCTS_PER_PAGE:
-                break
+                        // GA4 data del innerHTML
+                        const html = pDiv.innerHTML;
+                        let price = 0;
+                        let brand = '';
+                        let cat1 = '', cat2 = '', cat3 = '';
 
-            time.sleep(REQUEST_DELAY)
+                        const pm = html.match(
+                            /&quot;price&quot;:(\\d+\\.?\\d*)/
+                        );
+                        if (pm) price = parseFloat(pm[1]);
 
-        except Exception as e:
-            logger.warning("  Error en offset %d: %s", offset, e)
-            break
+                        // Precio visible como fallback
+                        if (!price) {
+                            const pe = pDiv.querySelector(
+                                '.price-offer-price, [class*="price"]'
+                            );
+                            if (pe) {
+                                const pt = pe.textContent.trim();
+                                const pmv = pt.match(/(\\d+),(\\d{2})/);
+                                if (pmv) price = parseFloat(
+                                    pmv[1] + '.' + pmv[2]
+                                );
+                            }
+                        }
+
+                        const bm = html.match(
+                            /&quot;item_brand&quot;:&quot;([^&]*)&quot;/
+                        );
+                        if (bm) brand = bm[1];
+
+                        const c1 = html.match(
+                            /&quot;item_category&quot;:&quot;([^&]*)&quot;/
+                        );
+                        if (c1) cat1 = c1[1];
+
+                        const c2 = html.match(
+                            /&quot;item_category2&quot;:&quot;([^&]*)&quot;/
+                        );
+                        if (c2) cat2 = c2[1];
+
+                        const c3 = html.match(
+                            /&quot;item_category3&quot;:&quot;([^&]*)&quot;/
+                        );
+                        if (c3) cat3 = c3[1];
+
+                        // Precio por unidad
+                        let unitPrice = price;
+                        const ue = pDiv.querySelector(
+                            '.price-offer-description'
+                        );
+                        if (ue) {
+                            const um = ue.textContent.match(
+                                /(\\d+),(\\d{2})/
+                            );
+                            if (um) unitPrice = parseFloat(
+                                um[1] + '.' + um[2]
+                            );
+                        }
+
+                        // Imagen
+                        let imgSrc = '';
+                        const img = pDiv.querySelector(
+                            '.product-image img'
+                        );
+                        if (img) imgSrc = img.getAttribute('src') ||
+                                          img.getAttribute('data-src') || '';
+
+                        // Formato
+                        let formato = '';
+                        const fm = name.match(
+                            /(\\d+\\s*x\\s*\\d+\\s*(?:ml|l|g|kg|cl|ud)\\.?)/i
+                        );
+                        if (fm) formato = fm[1];
+                        else {
+                            const fm2 = name.match(
+                                /(\\d+(?:[.,]\\d+)?\\s*(?:litros?|l|ml|cl|kg|g|gr)\\.?)/i
+                            );
+                            if (fm2) formato = fm2[1];
+                        }
+
+                        if (name && price > 0) {
+                            prods.push({
+                                id, name, price, unitPrice,
+                                brand, cat1, cat2, cat3,
+                                imgSrc, formato, href
+                            });
+                        }
+                    } catch(e) {}
+                }
+                return prods;
+            }
+        """)
+    except Exception:
+        return []
+
+    if not raw_list:
+        return []
+
+    productos = []
+    seen = set()
+    for raw in raw_list:
+        pid = raw.get("id", "")
+        if not pid or pid in seen:
+            continue
+        seen.add(pid)
+
+        nombre = raw.get("name", "")
+        precio = raw.get("price", 0)
+        if not nombre or precio <= 0:
+            continue
+
+        # Resolver categoría real
+        categoria = _resolver_categoria(
+            cat_map,
+            raw.get("cat1", ""),
+            raw.get("cat2", ""),
+            raw.get("cat3", ""),
+            fallback=termino.capitalize(),
+        )
+
+        href = raw.get("href", "")
+        if href and not href.startswith("http"):
+            href = "%s%s" % (BASE_URL, href)
+
+        productos.append({
+            "Id": str(pid),
+            "Nombre": nombre,
+            "Precio": precio,
+            "Precio_por_unidad": raw.get("unitPrice", precio),
+            "Formato": raw.get("formato", ""),
+            "Categoria": categoria,
+            "Supermercado": "Eroski",
+            "Url": href or "%s/es/productdetail/%s/" % (BASE_URL, pid),
+            "Url_imagen": raw.get("imgSrc", ""),
+            "Marca": raw.get("brand", ""),
+        })
 
     return productos
-
-
-def _extraer_total(html):
-    """Extrae el número total de resultados del HTML."""
-    # Patrón: "Mostrando resultados para leche (521)"
-    match = re.search(r'\((\d+)\)\s*</h2>', html)
-    if match:
-        return int(match.group(1))
-    return None
-
-
-def _extraer_productos_html(html, cat_nombre):
-    """Extrae productos del HTML de resultados de búsqueda."""
-    productos = []
-
-    # Estrategia 1: Extraer datos GA4 embebidos en atributos
-    # Patrón: "item_name":"...", "item_id":"...", "price":X.XX, "item_brand":"..."
-    pattern_ga4 = (
-        r'"price"\s*:\s*([\d.]+)\s*,'
-        r'[^}]*?"item_name"\s*:\s*"([^"]+)"\s*,'
-        r'[^}]*?"item_id"\s*:\s*"(\d+)"\s*,'
-        r'[^}]*?"item_brand"\s*:\s*"([^"]*)"'
-    )
-
-    # El orden puede variar, intentemos patrón flexible
-    # Buscar bloques que contengan item_id y price
-    bloques = re.findall(
-        r'\{[^{}]*?"item_id"\s*:\s*"(\d+)"[^{}]*?\}',
-        html,
-        re.DOTALL,
-    )
-
-    for bloque_match in bloques:
-        # Encontrar el bloque completo que contiene este item_id
-        item_id = bloque_match
-        # Buscar el contexto completo alrededor de este item_id
-        patron = (
-            r'\{[^{}]*?"item_id"\s*:\s*"' + re.escape(item_id)
-            + r'"[^{}]*?\}'
-        )
-        matches = re.finditer(patron, html, re.DOTALL)
-        for m in matches:
-            bloque = m.group(0)
-            prod = _parsear_bloque_ga4(bloque, item_id, cat_nombre)
-            if prod:
-                productos.append(prod)
-                break  # Solo el primer match por item_id
-
-    # Deduplicar dentro de página (un producto puede aparecer varias veces)
-    vistos = set()
-    unicos = []
-    for p in productos:
-        if p["Id"] not in vistos:
-            vistos.add(p["Id"])
-            unicos.append(p)
-
-    return unicos
-
-
-def _parsear_bloque_ga4(bloque, item_id, cat_nombre):
-    """Parsea un bloque GA4 JSON para extraer datos de producto."""
-    # Decodificar HTML entities
-    bloque = bloque.replace("&quot;", '"').replace("&amp;", "&")
-
-    # Precio
-    precio = None
-    m = re.search(r'"price"\s*:\s*([\d.]+)', bloque)
-    if m:
-        try:
-            precio = float(m.group(1))
-        except (ValueError, TypeError):
-            pass
-    if precio is None or precio <= 0:
-        return None
-
-    # Nombre
-    nombre = ""
-    m = re.search(r'"item_name"\s*:\s*"([^"]+)"', bloque)
-    if m:
-        nombre = m.group(1)
-    if not nombre:
-        return None
-
-    # Marca
-    marca = ""
-    m = re.search(r'"item_brand"\s*:\s*"([^"]*)"', bloque)
-    if m:
-        marca = m.group(1)
-
-    # Categoría GA4
-    cat_ga4 = ""
-    m = re.search(r'"item_category"\s*:\s*"([^"]*)"', bloque)
-    if m:
-        cat_ga4 = m.group(1)
-    if cat_ga4:
-        cat_nombre = cat_ga4
-
-    # Imagen y URL
-    imagen = "%s//images/%s.jpg" % (BASE_URL, item_id)
-    url_p = "%s/es/productdetail/%s/" % (BASE_URL, item_id)
-
-    # Formato: intentar extraer del nombre
-    formato = _extraer_formato_nombre(nombre)
-
-    # Precio por unidad: calcular si hay formato
-    precio_u = precio
-
-    return {
-        "Id": str(item_id),
-        "Nombre": nombre,
-        "Precio": precio,
-        "Precio_por_unidad": precio_u,
-        "Formato": formato,
-        "Categoria": cat_nombre,
-        "Supermercado": "Eroski",
-        "Url": url_p,
-        "Url_imagen": imagen,
-        "Marca": marca,
-    }
-
-
-def _extraer_formato_nombre(nombre):
-    """Intenta extraer el formato/tamaño del nombre del producto."""
-    # Patrones comunes: "1 litro", "500 g", "6x200 ml", "pack 6"
-    patrones = [
-        r'(\d+\s*x\s*\d+\s*(?:ml|l|g|kg|cl|ud)\.?)',
-        r'(\d+(?:[.,]\d+)?\s*(?:litros?|l|ml|cl)\.?)',
-        r'(\d+(?:[.,]\d+)?\s*(?:kg|g|gr)\.?)',
-        r'(pack\s*\d+)',
-        r'(\d+\s*(?:unidades|uds?|ud)\.?)',
-    ]
-    for patron in patrones:
-        m = re.search(patron, nombre, re.IGNORECASE)
-        if m:
-            return m.group(1).strip()
-    return ""
-
-
-# ─── ALTERNATIVA: EXTRAER PRECIO/UNIDAD DEL HTML ──────────────────────────────
-
-def _extraer_precio_unidad_html(html, item_id):
-    """Intenta extraer precio por unidad del HTML para un producto."""
-    # Buscar "X,XX €/litro" o "X,XX €/kg" cerca del producto
-    patron = (
-        r'%s.*?(\d+,\d{2})\s*€\s*/\s*(litro|kg|unidad|l|kilo)'
-        % re.escape(item_id)
-    )
-    m = re.search(patron, html[:html.find(item_id) + 2000] if item_id in html else html,
-                  re.DOTALL | re.IGNORECASE)
-    if m:
-        try:
-            return float(m.group(1).replace(",", "."))
-        except (ValueError, TypeError):
-            pass
-    return None

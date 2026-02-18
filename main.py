@@ -138,6 +138,19 @@ def main():
             except Exception as e:
                 logger.error("Error guardando %s en DB: %s", nombre, e)
 
+    # Deduplicar: mismo producto en varias categorías
+    if not df_total.empty:
+        antes = len(df_total)
+        df_total = df_total.drop_duplicates(
+            subset=["Id", "Supermercado"], keep="first"
+        )
+        eliminados = antes - len(df_total)
+        if eliminados > 0:
+            logger.info(
+                "Deduplicación: %d duplicados eliminados (%d → %d)",
+                eliminados, antes, len(df_total),
+            )
+
     # Resumen
     logger.info("")
     logger.info("=" * 60)
@@ -145,7 +158,7 @@ def main():
     logger.info("=" * 60)
     for nombre, cantidad in resultados.items():
         logger.info("  %-12s: %d productos", nombre, cantidad)
-    logger.info("  %-12s: %d productos", "TOTAL", len(df_total))
+    logger.info("  %-12s: %d productos (tras dedup)", "TOTAL", len(df_total))
     logger.info("=" * 60)
 
     # Estadísticas DB
