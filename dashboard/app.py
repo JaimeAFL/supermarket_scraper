@@ -12,6 +12,13 @@ Las subpáginas en dashboard/pages/ se descubren automáticamente.
 
 import sys
 import os
+
+
+# Añadir raíz del proyecto al path ANTES de los imports del proyecto
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 import streamlit as st
 import pandas as pd
 from database.database_db_manager import DatabaseManager
@@ -20,12 +27,6 @@ from dashboard.utils.charts import (
     grafico_productos_por_supermercado,
     grafico_distribucion_precios,
 )
-
-# Añadir raíz del proyecto al path para que los imports funcionen
-# tanto en local como en Streamlit Cloud
-_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-if _PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, _PROJECT_ROOT)
 
 
 # =============================================================================
