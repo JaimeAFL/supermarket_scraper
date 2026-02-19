@@ -1,23 +1,24 @@
 # -*- coding: utf-8 -*-
-
 """
 Dashboard principal de Supermarket Price Tracker.
 
-Ejecutar con:
+Ejecutar desde la raíz del proyecto con:
     streamlit run dashboard/app.py
-
-Página principal con resumen general y estadísticas.
-Las subpáginas en dashboard/pages/ se descubren automáticamente.
 """
 
 import sys
 import os
 
-
 # Añadir raíz del proyecto al path ANTES de los imports del proyecto
 _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
+
+# ── Ruta absoluta a la BD ─────────────────────────────────────────────────────
+# Se calcula a partir de este archivo, no del CWD, para que funcione siempre.
+_DB_PATH = os.path.join(_PROJECT_ROOT, "database", "supermercados.db")
+os.environ.setdefault("SUPERMARKET_DB_PATH", _DB_PATH)
+# ─────────────────────────────────────────────────────────────────────────────
 
 import streamlit as st
 import pandas as pd
@@ -28,9 +29,8 @@ from dashboard.utils.charts import (
     grafico_distribucion_precios,
 )
 
-
 # =============================================================================
-# CONFIGURACIÓN DE LA PÁGINA (solo aquí, nunca en las subpáginas)
+# CONFIGURACIÓN
 # =============================================================================
 st.set_page_config(
     page_title="Supermarket Price Tracker",
@@ -45,17 +45,28 @@ st.set_page_config(
 st.sidebar.title("🛒 Price Tracker")
 st.sidebar.markdown("---")
 st.sidebar.markdown(
-    "Datos actualizados diariamente vía [GitHub Actions]"
-    "(https://github.com/tu-usuario/supermarket-price-tracker/actions)."
+    "Datos actualizados diariamente vía "
+    "[GitHub Actions](https://github.com/tu-usuario/supermarket-price-tracker/actions)."
 )
-
+st.sidebar.caption(f"BD: `{_DB_PATH}`")
 
 # =============================================================================
 # CONEXIÓN A BASE DE DATOS
 # =============================================================================
-inicializar_base_datos()
-db = DatabaseManager()
+@st.cache_resource
+def _init_db():
+    inicializar_base_datos(_DB_PATH)
 
+_init_db()
+db = DatabaseManager(_DB_PATH)
+
+# Verificación rápida al arrancar
+if not os.path.exists(_DB_PATH):
+    st.error(
+        f"⚠️ No se encontró la base de datos en:\n\n`{_DB_PATH}`\n\n"
+        "Ejecuta primero:\n```\npython import_excel_to_db.py\n```"
+    )
+    st.stop()
 
 # =============================================================================
 # PÁGINA PRINCIPAL
@@ -67,15 +78,14 @@ st.markdown("Comparador de precios de supermercados españoles con histórico di
 stats = db.obtener_estadisticas()
 
 col1, col2, col3, col4 = st.columns(4)
-
 with col1:
-    st.metric("Productos", f"{stats['total_productos']:,}")
+    st.metric("Productos", f"{stats.get('total_productos', 0):,}")
 with col2:
-    st.metric("Registros de precio", f"{stats['total_registros_precios']:,}")
+    st.metric("Registros de precio", f"{stats.get('total_registros_precios', 0):,}")
 with col3:
-    st.metric("Supermercados", stats['total_supermercados'])
+    st.metric("Supermercados", stats.get('total_supermercados', 0))
 with col4:
-    st.metric("Equivalencias", stats['total_equivalencias'])
+    st.metric("Equivalencias", stats.get('total_equivalencias', 0))
 
 st.markdown("---")
 
@@ -90,25 +100,21 @@ with col_izq:
 
 with col_der:
     supermercados_disponibles = list(stats.get('productos_por_supermercado', {}).keys())
-
     if supermercados_disponibles:
-        super_seleccionado = st.selectbox(
-            "Distribución de precios de:",
-            supermercados_disponibles
-        )
+        super_seleccionado = st.selectbox("Distribución de precios de:", supermercados_disponibles)
         df_super = db.obtener_productos_con_precio_actual(supermercado=super_seleccionado)
         st.plotly_chart(
             grafico_distribucion_precios(df_super, super_seleccionado),
             use_container_width=True
         )
     else:
-        st.info("Ejecuta el scraper primero para ver datos aquí.")
+        st.info("Ejecuta `python import_excel_to_db.py` para cargar los datos.")
 
 # --- Tabla resumen por supermercado ---
 st.markdown("---")
 st.subheader("Resumen por supermercado")
 
-if stats['productos_por_supermercado']:
+if stats.get('productos_por_supermercado'):
     datos_tabla = []
     for supermercado, total in stats['productos_por_supermercado'].items():
         df_super = db.obtener_productos_con_precio_actual(supermercado=supermercado)
@@ -118,30 +124,20 @@ if stats['productos_por_supermercado']:
                 'Productos': total,
                 'Precio medio': f"{df_super['precio'].mean():.2f} €",
                 'Precio mínimo': f"{df_super['precio'].min():.2f} €",
-                'Precio máximo': f"{df_super['precio'].max():.2f} €"
+                'Precio máximo': f"{df_super['precio'].max():.2f} €",
             })
-
     if datos_tabla:
-        st.dataframe(
-            pd.DataFrame(datos_tabla),
-            use_container_width=True,
-            hide_index=True
-        )
+        st.dataframe(pd.DataFrame(datos_tabla), use_container_width=True, hide_index=True)
 else:
-    st.info(
-        "No hay datos todavía. Ejecuta el scraper con `python main.py` "
-        "para empezar a recopilar precios."
-    )
+    st.info("No hay datos. Ejecuta `python import_excel_to_db.py` primero.")
 
 # --- Búsqueda rápida ---
 st.markdown("---")
 st.subheader("Búsqueda rápida de productos")
-
 busqueda = st.text_input("Buscar producto por nombre:", placeholder="Ej: leche, coca-cola, pan...")
 
 if busqueda:
     df_resultados = db.buscar_productos(nombre=busqueda, limite=20)
-
     if not df_resultados.empty:
         st.dataframe(
             df_resultados[['nombre', 'supermercado', 'categoria', 'formato']],
@@ -153,7 +149,10 @@ if busqueda:
 
 # --- Info de última captura ---
 st.markdown("---")
-if stats['ultima_captura']:
-    st.caption(f"Primera captura: {stats['primera_captura']} | Última captura: {stats['ultima_captura']}")
+if stats.get('ultima_captura'):
+    st.caption(
+        f"Primera captura: {stats['primera_captura']} | "
+        f"Última captura: {stats['ultima_captura']}"
+    )
 else:
     st.caption("Sin capturas de precios registradas.")

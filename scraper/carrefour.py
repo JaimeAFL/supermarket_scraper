@@ -1,610 +1,518 @@
-# -*- coding: utf-8 -*-
-
 """
-Scraper de Carrefour (carrefour.es/supermercado).
+scraper/carrefour.py - Scraper para Carrefour
+PROBLEMA ORIGINAL: El dataLayer siempre devolvía los MISMOS ~54 productos fijos
+(promoted/featured) sin importar el término de búsqueda → 0 nuevos tras el primero.
 
-Estrategia COMBINADA:
-    Fase 1 – Mapeo de categorías:
-        Navega a /supermercado/ y extrae links del mega-menú.
-        Cada link tiene catXXXXX y nombre legible.
-        dataLayer push tiene p_category_level_1/2/3.
-        Esto mapea IDs de categoría a nombres reales.
-
-    Fase 2 – Extracción por búsqueda:
-        Navega a /supermercado/?query=TERMINO
-        Espera a que la SPA (Vue.js) renderice los productos.
-        Extrae de dataLayer (GTM ecommerce) + DOM.
-        Scroll para cargar más resultados.
-
-    Fase 3 – Extracción por categorías:
-        Navega a /supermercado/.../catXXXXX/c
-        Mismo proceso de extracción.
-        Complementa búsqueda con productos no encontrados.
-
-La web es una SPA Vue.js que carga productos vía Empathy.co API.
-Playwright ejecuta el JS real del navegador, por lo que la API
-funciona desde el contexto de la página.
+SOLUCIÓN: Interceptar las respuestas de la API de Empathy.co directamente
+desde el contexto del navegador Playwright. La API devuelve JSON con todos
+los productos de la búsqueda real, bypaseando el bloqueo Cloudflare porque
+la request la hace el propio navegador con las cookies/headers correctos.
 """
 
-import os
-import re
-import time
 import logging
-import pandas as pd
+import time
+import json
+import re
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 logger = logging.getLogger(__name__)
 
-BASE = "https://www.carrefour.es"
+BASE_URL = "https://www.carrefour.es"
 
-# Términos de búsqueda para cobertura amplia
+# Términos de búsqueda amplios para máxima cobertura
 TERMINOS_BUSQUEDA = [
-    "leche", "yogur", "queso", "huevos", "mantequilla",
-    "nata", "natillas", "flan",
-    "fruta", "verdura", "ensalada", "patatas", "tomate",
-    "carne", "pollo", "cerdo", "ternera", "cordero",
-    "pescado", "marisco", "salmon", "atun", "merluza", "gambas",
-    "jamon", "chorizo", "salchichon", "pavo", "fuet",
-    "pan", "cereales", "galletas", "bolleria", "tostadas",
-    "pasta", "arroz", "legumbres", "lentejas", "garbanzos",
-    "aceite", "vinagre", "sal", "harina", "especias",
-    "conserva", "tomate frito", "salsa", "caldo", "sopa",
-    "cafe", "te", "infusion", "cacao", "colacao",
-    "chocolate", "miel", "mermelada", "azucar", "edulcorante",
-    "patatas fritas", "frutos secos", "aceitunas", "snacks",
-    "pizza", "helado", "croquetas", "congelados",
-    "agua", "refresco", "coca cola", "zumo", "cerveza", "vino",
+    "leche", "yogur", "queso", "mantequilla", "nata", "natillas", "flan", "postre",
+    "huevos", "fruta", "verdura", "patatas", "tomate", "cebolla", "zanahoria",
+    "lechuga", "manzana", "naranja", "platano", "pera", "limon",
+    "carne", "pollo", "cerdo", "ternera", "cordero", "jamon", "chorizo",
+    "salchichon", "pavo", "fuet", "mortadela", "salchicha", "bacon",
+    "pescado", "salmon", "atun", "merluza", "gambas", "marisco", "mejillones",
+    "pan", "cereales", "galletas", "bolleria", "tostadas", "croissant",
+    "pasta", "arroz", "legumbres", "lentejas", "garbanzos", "alubias",
+    "aceite", "vinagre", "sal", "azucar", "harina", "especias", "pimienta",
+    "conserva", "tomate frito", "salsa", "mayonesa", "ketchup", "mostaza",
+    "caldo", "sopa", "crema verduras",
+    "cafe", "te", "infusion", "cacao", "chocolate", "colacao",
+    "miel", "mermelada", "nocilla", "mantequilla cacahuete",
+    "patatas fritas", "frutos secos", "aceitunas", "snacks", "palomitas",
+    "pizza", "helado", "croquetas", "nuggets", "lasagna", "canelones",
+    "agua", "refresco", "coca cola", "fanta", "zumo", "cerveza", "vino",
+    "sidra", "cava",
     "detergente", "suavizante", "lejia", "lavavajillas", "fregasuelos",
-    "papel higienico", "gel ducha", "champu", "jabon",
-    "desodorante", "pasta dientes", "crema",
-    "panales", "comida perro", "comida gato",
+    "papel higienico", "papel cocina", "bolsas basura",
+    "gel ducha", "champu", "jabon", "desodorante", "pasta dientes",
+    "crema facial", "colonia", "maquillaje", "afeitado",
+    "panales", "toallitas bebe", "leche bebe",
+    "comida perro", "comida gato", "arena gato",
+]
+
+# Categorías del menú de supermercado (URL slug → nombre)
+CATEGORIAS_MENU = [
+    ("/supermercado/frescos/c/sup01", "Frescos"),
+    ("/supermercado/lacteos-y-huevos/c/sup02", "Lácteos y Huevos"),
+    ("/supermercado/congelados/c/sup03", "Congelados"),
+    ("/supermercado/alimentacion/c/sup04", "Alimentación"),
+    ("/supermercado/bebidas/c/sup05", "Bebidas"),
+    ("/supermercado/drogueria-y-limpieza/c/sup06", "Droguería"),
+    ("/supermercado/perfumeria-e-higiene/c/sup07", "Perfumería"),
+    ("/supermercado/bebe/c/sup08", "Bebé"),
+    ("/supermercado/mascotas/c/sup09", "Mascotas"),
+    ("/supermercado/parafarmacia/c/sup10", "Parafarmacia"),
 ]
 
 
-def gestion_carrefour():
-    """Función principal."""
-    t0 = time.time()
-    logger.info("Iniciando extracción de Carrefour...")
-
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        logger.error("Playwright no instalado.")
-        return pd.DataFrame()
-
-    cp = os.getenv("CODIGO_POSTAL", "28001")
-    todos = []
-    ids_vistos = set()
-
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            ctx = browser.new_context(
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/120.0.0.0 Safari/537.36"
-                ),
-                locale="es-ES",
-            )
-            page = ctx.new_page()
-
-            # ── Setup ─────────────────────────────────────────
-            logger.info("Navegando a carrefour.es/supermercado/...")
-            page.goto(
-                "%s/supermercado/" % BASE,
-                wait_until="domcontentloaded",
-                timeout=60000,
-            )
-            page.wait_for_timeout(5000)
-            _aceptar_cookies(page)
-            _configurar_cp(page, cp)
-
-            # ── Fase 1: Mapeo de categorías ───────────────────
-            cat_map = _construir_mapa_categorias(page)
-            logger.info(
-                "Mapa de categorías: %d entradas.", len(cat_map)
-            )
-
-            # ── Fase 2: Búsqueda por términos ────────────────
-            for termino in TERMINOS_BUSQUEDA:
-                logger.info("Buscando: '%s'", termino)
-                try:
-                    productos = _buscar_productos(page, termino, cat_map)
-                    nuevos = 0
-                    for prod in productos:
-                        if prod["Id"] not in ids_vistos:
-                            ids_vistos.add(prod["Id"])
-                            todos.append(prod)
-                            nuevos += 1
-                    if nuevos > 0:
-                        logger.info(
-                            "  → %d encontrados, %d nuevos (total: %d)",
-                            len(productos), nuevos, len(ids_vistos),
-                        )
-                    else:
-                        logger.info(
-                            "  → %d encontrados, 0 nuevos",
-                            len(productos),
-                        )
-                except Exception as e:
-                    logger.warning(
-                        "  Error '%s': %s", termino, str(e)[:80]
-                    )
-
-            # ── Fase 3: Categorías complementarias ────────────
-            categorias = _extraer_urls_categorias(cat_map)
-            logger.info(
-                "Categorías complementarias: %d", len(categorias)
-            )
-            for url, cat_nombre in categorias:
-                try:
-                    productos = _extraer_pagina(
-                        page, url, cat_nombre, cat_map
-                    )
-                    nuevos = 0
-                    for prod in productos:
-                        if prod["Id"] not in ids_vistos:
-                            ids_vistos.add(prod["Id"])
-                            todos.append(prod)
-                            nuevos += 1
-                    if nuevos > 0:
-                        logger.info(
-                            "  Cat %s: %d nuevos", cat_nombre, nuevos
-                        )
-                except Exception as e:
-                    logger.warning(
-                        "  Error cat '%s': %s",
-                        cat_nombre, str(e)[:80],
-                    )
-
-            browser.close()
-
-    except Exception as e:
-        logger.error("Error Playwright Carrefour: %s", e)
-        return pd.DataFrame()
-
-    if not todos:
-        logger.warning("Carrefour: 0 productos extraídos.")
-        return pd.DataFrame()
-
-    df = pd.DataFrame(todos)
-    dur = time.time() - t0
-    logger.info(
-        "Carrefour completado: %d productos en %dm %ds",
-        len(df), int(dur // 60), int(dur % 60),
-    )
-    return df
-
-
-# ══════════════════════════════════════════════════════════════
-#  Helpers generales
-# ══════════════════════════════════════════════════════════════
-
 def _aceptar_cookies(page):
-    for sel in [
-        "#onetrust-accept-btn-handler",
-        'button:has-text("Aceptar todas")',
-        'button:has-text("Aceptar")',
-    ]:
-        try:
-            el = page.locator(sel).first
-            if el.is_visible(timeout=2000):
-                el.click()
-                page.wait_for_timeout(2000)
-                return
-        except Exception:
-            continue
-
-
-def _configurar_cp(page, cp):
-    for sel in [
-        'input[name="postal-code"]',
-        'input[name="postal_code"]',
-        'input[placeholder*="postal"]',
-    ]:
-        try:
-            el = page.locator(sel).first
-            if el.is_visible(timeout=2000):
-                el.fill(cp)
-                page.wait_for_timeout(500)
-                page.keyboard.press("Enter")
-                page.wait_for_timeout(3000)
-                logger.info("CP %s configurado.", cp)
-                return
-        except Exception:
-            continue
-
-
-# ══════════════════════════════════════════════════════════════
-#  Fase 1: Mapa de categorías
-# ══════════════════════════════════════════════════════════════
-
-def _construir_mapa_categorias(page):
-    """Extrae links del mega-menú y construye mapa de catIDs → nombres."""
+    """Acepta el banner de cookies si aparece."""
     try:
-        links = page.evaluate("""
-            () => {
-                const result = [];
-                const allLinks = document.querySelectorAll(
-                    'a[href*="/supermercado/"]'
-                );
-                for (const a of allLinks) {
-                    const href = a.getAttribute('href') || '';
-                    const name = (a.getAttribute('title') ||
-                                  a.textContent || '').trim();
-                    if (name && href) result.push([href, name]);
-                }
-                return result;
-            }
-        """)
+        btn = page.locator(
+            "#onetrust-accept-btn-handler, "
+            "button[title='Aceptar todas las cookies'], "
+            "button[class*='accept-all']"
+        ).first
+        if btn.is_visible(timeout=4000):
+            btn.click()
+            logger.debug("Banner de cookies aceptado.")
+            time.sleep(1.5)
     except Exception:
-        links = []
+        pass
 
-    cat_map = {}
 
-    for href, name in links:
-        # Extraer catXXXXX de la URL
-        m = re.search(r'(cat\d+)/c', href)
-        if m:
-            cat_id = m.group(1)
-            cat_map[cat_id] = name
-            # También guardar URL completa
-            full_url = href if href.startswith("http") else "%s%s" % (
-                BASE, href
+def _setup_intercepcion(page, resultados_api):
+    """
+    Configura interceptación de red para capturar respuestas de Empathy.co
+    y de la API interna de Carrefour. Esta es la clave de la solución:
+    el navegador hace la request con todos los headers/cookies correctos
+    y nosotros capturamos el JSON de respuesta.
+    """
+    def on_response(response):
+        url = response.url
+        status = response.status
+
+        # Empathy.co es el motor de búsqueda de Carrefour
+        if status != 200:
+            return
+
+        es_empathy = "empathy.co" in url and ("search" in url or "query" in url)
+        es_carrefour_api = ("carrefour.es/api" in url and
+                           ("product" in url or "search" in url or "catalog" in url))
+
+        if es_empathy or es_carrefour_api:
+            try:
+                data = response.json()
+                resultados_api.append({"url": url, "data": data})
+                logger.debug(f"Interceptada respuesta API: {url[:80]}...")
+            except Exception:
+                pass
+
+    page.on("response", on_response)
+
+
+def _parsear_respuesta_empathy(data):
+    """
+    Parsea la respuesta JSON de la API de Empathy.co.
+    Estructura típica: data.catalog.content[].docs[] o data.results[]
+    """
+    productos = []
+
+    # Intentar diferentes estructuras de respuesta de Empathy
+    docs = []
+
+    if isinstance(data, dict):
+        # Estructura principal de Empathy
+        catalog = data.get("catalog") or data.get("data") or data
+        if isinstance(catalog, dict):
+            content = catalog.get("content") or []
+            for seccion in content:
+                if isinstance(seccion, dict):
+                    docs.extend(seccion.get("docs") or [])
+
+            # Alternativa directa
+            if not docs:
+                docs = catalog.get("docs") or catalog.get("results") or []
+
+        # Estructura simplificada
+        if not docs:
+            docs = data.get("docs") or data.get("results") or data.get("products") or []
+
+    for doc in docs:
+        if not isinstance(doc, dict):
+            continue
+
+        try:
+            # Precio - Empathy suele tener "price" o "eb_price"
+            precio = None
+            for campo_precio in ["price", "eb_price", "salePrice", "currentPrice",
+                                 "price_es", "priceValue", "originalPrice"]:
+                val = doc.get(campo_precio)
+                if val is not None:
+                    try:
+                        if isinstance(val, str):
+                            val = re.sub(r"[^\d.,]", "", val).replace(",", ".")
+                        precio = float(val)
+                        if precio > 0:
+                            break
+                    except (ValueError, TypeError):
+                        continue
+
+            if not precio or precio <= 0:
+                continue
+
+            # ID
+            id_producto = str(
+                doc.get("id") or doc.get("productId") or
+                doc.get("eb_sku") or doc.get("sku") or
+                doc.get("code") or ""
             )
-            cat_map["url_%s" % cat_id] = full_url
+            if not id_producto:
+                continue
 
-        # p_category_level slugs (del dataLayer)
-        # e.g. cat20001-la-despensa → "La Despensa"
-        for seg in re.findall(r'(cat\d+)-([^/]+)', href):
-            cid = seg[0]
-            slug_name = seg[1].replace('-', ' ').strip().title()
-            if cid not in cat_map:
-                cat_map[cid] = slug_name
+            # Nombre
+            nombre = (doc.get("name") or doc.get("title") or
+                     doc.get("eb_name") or "").strip()
+            if not nombre:
+                continue
 
-    return cat_map
+            # Categoría
+            categoria = ""
+            cats = doc.get("categories") or doc.get("eb_category") or []
+            if isinstance(cats, list) and cats:
+                categoria = str(cats[-1]) if cats else ""
+            elif isinstance(cats, str):
+                categoria = cats
 
+            # Precio unitario
+            precio_unidad = str(doc.get("pricePerUnit") or doc.get("unitPrice") or
+                               doc.get("eb_pricePerUnit") or "")
 
-def _extraer_urls_categorias(cat_map):
-    """Construye lista de (url, nombre) desde el mapa."""
-    categorias = []
-    seen = set()
-    for key, value in cat_map.items():
-        if key.startswith("url_"):
-            cat_id = key[4:]
-            nombre = cat_map.get(cat_id, cat_id)
-            if value not in seen:
-                seen.add(value)
-                categorias.append((value, nombre))
-    return categorias
+            # Imagen
+            imagen = ""
+            imgs = doc.get("image") or doc.get("images") or doc.get("eb_image") or []
+            if isinstance(imgs, list) and imgs:
+                imagen = imgs[0] if isinstance(imgs[0], str) else imgs[0].get("url", "")
+            elif isinstance(imgs, str):
+                imagen = imgs
 
+            # URL del producto
+            url_prod = doc.get("url") or doc.get("eb_url") or ""
+            if url_prod and not url_prod.startswith("http"):
+                url_prod = BASE_URL + url_prod
 
-# ══════════════════════════════════════════════════════════════
-#  Fase 2: Búsqueda
-# ══════════════════════════════════════════════════════════════
+            productos.append({
+                "Id": id_producto,
+                "Nombre": nombre,
+                "Precio": precio,
+                "Precio_unidad": precio_unidad,
+                "Categoria": categoria,
+                "Supermercado": "Carrefour",
+                "URL": url_prod,
+                "URL_imagen": imagen,
+            })
 
-def _buscar_productos(page, termino, cat_map):
-    """Busca un término y extrae productos."""
-    url = "%s/supermercado/?query=%s" % (BASE, termino)
-    return _extraer_pagina(page, url, termino.capitalize(), cat_map)
-
-
-def _extraer_pagina(page, url, fallback_cat, cat_map):
-    """Navega a URL, espera SPA, scroll, extrae productos."""
-    try:
-        page.goto(url, wait_until="domcontentloaded", timeout=30000)
-    except Exception:
-        return []
-
-    # Esperar a que la SPA renderice productos
-    # Intentar esperar a un selector de producto
-    _esperar_productos(page)
-
-    # Scroll para cargar más resultados
-    prev_count = 0
-    stable = 0
-    for _ in range(25):
-        count = page.evaluate("""
-            document.querySelectorAll(
-                '.product-card-item, .product-card-list__item,' +
-                '[class*="product-card"], .ebx-result'
-            ).length
-        """)
-        if count == prev_count:
-            stable += 1
-            if stable >= 3:
-                break
-        else:
-            stable = 0
-        prev_count = count
-        page.evaluate("window.scrollBy(0, 1500)")
-        page.wait_for_timeout(800)
-
-    # Extraer con múltiples métodos
-    productos = _extraer_datalayer(page, fallback_cat, cat_map)
-    if not productos:
-        productos = _extraer_dom(page, fallback_cat)
+        except Exception:
+            continue
 
     return productos
 
 
-def _esperar_productos(page):
-    """Espera a que aparezcan product cards en el DOM."""
-    selectores = [
-        ".product-card-item",
-        ".product-card-list__item",
-        '[class*="product-card"]',
-        ".ebx-result",
-        ".product-card",
-    ]
-    for sel in selectores:
-        try:
-            page.wait_for_selector(sel, timeout=8000)
-            page.wait_for_timeout(2000)
-            return
-        except Exception:
-            continue
-    # Si ningún selector aparece, esperar un poco de todas formas
-    page.wait_for_timeout(5000)
+def _buscar_termino_con_intercepcion(page, termino, resultados_globales):
+    """
+    Navega a la página de búsqueda e intercepta la respuesta de la API.
+    Retorna lista de productos nuevos.
+    """
+    resultados_api = []
 
+    # Activar interceptación ANTES de navegar
+    page.on("response", lambda r: _capturar_respuesta(r, resultados_api))
 
-# ══════════════════════════════════════════════════════════════
-#  Extracción: dataLayer
-# ══════════════════════════════════════════════════════════════
+    url_busqueda = f"{BASE_URL}/search?query={termino.replace(' ', '+')}&scope=supermarket"
 
-def _extraer_datalayer(page, fallback_cat, cat_map):
-    """Extrae productos del dataLayer (GTM ecommerce events)."""
     try:
-        data = page.evaluate("""
+        page.goto(url_busqueda, wait_until="networkidle", timeout=35000)
+        # Esperar adicional para JS asíncrono
+        time.sleep(2)
+
+        # Scroll para disparar carga de más productos
+        page.evaluate("window.scrollTo(0, 500)")
+        time.sleep(1)
+
+    except PlaywrightTimeoutError:
+        logger.debug(f"Timeout buscando '{termino}', procesando lo interceptado...")
+    except Exception as e:
+        logger.debug(f"Error buscando '{termino}': {e}")
+    finally:
+        page.remove_listener("response", lambda r: _capturar_respuesta(r, resultados_api))
+
+    # Parsear respuestas interceptadas
+    nuevos = []
+    for item in resultados_api:
+        prods = _parsear_respuesta_empathy(item["data"])
+        for p in prods:
+            if p["Id"] not in resultados_globales:
+                resultados_globales.add(p["Id"])
+                p["Categoria"] = p["Categoria"] or termino.capitalize()
+                nuevos.append(p)
+
+    # Si la intercepción no funcionó, usar fallback DOM
+    if not nuevos:
+        nuevos_dom = _fallback_dom(page, termino, resultados_globales)
+        nuevos.extend(nuevos_dom)
+
+    return nuevos
+
+
+def _capturar_respuesta(response, lista):
+    """Handler de interceptación de red."""
+    url = response.url
+    if response.status != 200:
+        return
+    if ("empathy.co" in url or "carrefour.es/api" in url) and (
+            "search" in url or "query" in url or "product" in url):
+        try:
+            data = response.json()
+            lista.append({"url": url, "data": data})
+        except Exception:
+            pass
+
+
+def _fallback_dom(page, termino, resultados_globales):
+    """
+    Fallback: extrae productos del DOM cuando la intercepción falla.
+    Usa atributos data-* y el window.dataLayer como último recurso,
+    pero ahora busca en los items específicos de la búsqueda actual,
+    no en los datos globales de la página.
+    """
+    nuevos = []
+    try:
+        # Intentar extraer desde el estado interno de React/Vue si existe
+        datos = page.evaluate("""
             () => {
-                const dl = window.dataLayer || [];
-                const products = [];
-                const seen = new Set();
-
-                for (const entry of dl) {
-                    let items = null;
-
-                    // GA4 format
-                    if (entry.ecommerce && entry.ecommerce.items)
-                        items = entry.ecommerce.items;
-                    // Legacy UA impressions
-                    else if (entry.ecommerce && entry.ecommerce.impressions)
-                        items = entry.ecommerce.impressions;
-                    // view_item_list format
-                    else if (entry.event === 'view_item_list' &&
-                             entry.ecommerce && entry.ecommerce.items)
-                        items = entry.ecommerce.items;
-
-                    if (!items) continue;
-
-                    for (const item of items) {
-                        const id = String(
-                            item.item_id || item.id || ''
-                        );
-                        const name = item.item_name || item.name || '';
-                        const price = parseFloat(item.price) || 0;
-
-                        if (!id || !name || price <= 0) continue;
-                        if (seen.has(id)) continue;
-                        seen.add(id);
-
-                        products.push({
-                            id: id,
-                            name: name,
-                            price: price,
-                            brand: item.item_brand || item.brand || '',
-                            category: item.item_category ||
-                                      item.category || '',
-                            category2: item.item_category2 || '',
-                            category3: item.item_category3 || '',
-                            variant: item.item_variant ||
-                                     item.variant || ''
+                // Buscar en el store de Vuex o estado de React
+                const results = [];
+                
+                // Método 1: Atributos data en tarjetas de producto
+                const tarjetas = document.querySelectorAll(
+                    '[data-product-id], [data-pid], [data-ean], ' +
+                    'article[class*="product"], div[class*="ProductCard"]'
+                );
+                
+                tarjetas.forEach(el => {
+                    const pid = el.dataset.productId || el.dataset.pid || 
+                                el.dataset.ean || el.dataset.id || '';
+                    const nameEl = el.querySelector(
+                        '[class*="title"], [class*="name"], h2, h3, [class*="ProductCard__name"]'
+                    );
+                    const priceEl = el.querySelector(
+                        '[class*="price--sale"], [class*="ProductCard__price"], ' +
+                        '[class*="current-price"], [itemprop="price"]'
+                    );
+                    const imgEl = el.querySelector('img[src*="carrefour"], img[data-src*="carrefour"]');
+                    
+                    if (pid && nameEl && priceEl) {
+                        results.push({
+                            id: pid,
+                            name: nameEl.innerText.trim(),
+                            price: priceEl.getAttribute('content') || priceEl.innerText.trim(),
+                            img: imgEl ? (imgEl.src || imgEl.dataset.src || '') : '',
+                            url: el.querySelector('a') ? el.querySelector('a').href : ''
                         });
                     }
+                });
+                
+                // Método 2: JSON-LD de la página
+                if (results.length === 0) {
+                    document.querySelectorAll('script[type="application/ld+json"]').forEach(s => {
+                        try {
+                            const d = JSON.parse(s.textContent);
+                            if (d['@type'] === 'ItemList' && d.itemListElement) {
+                                d.itemListElement.forEach(item => {
+                                    if (item.item && item.item.offers) {
+                                        results.push({
+                                            id: item.item.sku || item.item['@id'] || '',
+                                            name: item.item.name || '',
+                                            price: item.item.offers.price || 0,
+                                            img: item.item.image || '',
+                                            url: item.item.url || ''
+                                        });
+                                    }
+                                });
+                            }
+                        } catch(e) {}
+                    });
                 }
-                return products;
+                
+                return results;
             }
         """)
-    except Exception:
-        return []
 
-    if not data:
-        return []
+        for item in datos:
+            try:
+                if not item["id"] or item["id"] in resultados_globales:
+                    continue
 
-    productos = []
-    for raw in data:
-        pid = str(raw.get("id", ""))
-        nombre = raw.get("name", "")
-        precio = raw.get("price", 0)
-        if not pid or not nombre or precio <= 0:
-            continue
+                precio_str = re.sub(r"[^\d.,]", "", str(item["price"])).replace(",", ".")
+                if not precio_str:
+                    continue
 
-        # Resolver categoría
-        cat_raw = raw.get("category", "")
-        categoria = _resolver_categoria_crf(
-            cat_map, cat_raw, raw.get("category2", ""),
-            raw.get("category3", ""), fallback_cat,
+                precio = float(precio_str)
+                if precio <= 0:
+                    continue
+
+                resultados_globales.add(item["id"])
+                nuevos.append({
+                    "Id": str(item["id"]),
+                    "Nombre": item["name"],
+                    "Precio": precio,
+                    "Precio_unidad": "",
+                    "Categoria": termino.capitalize(),
+                    "Supermercado": "Carrefour",
+                    "URL": item.get("url", ""),
+                    "URL_imagen": item.get("img", ""),
+                })
+            except Exception:
+                continue
+
+    except Exception as e:
+        logger.debug(f"Error en fallback DOM '{termino}': {e}")
+
+    return nuevos
+
+
+def _navegar_categoria(page, url_cat, nombre_cat, resultados_globales):
+    """
+    Navega una categoría completa con paginación, interceptando las respuestas API.
+    """
+    nuevos_total = []
+    pagina = 1
+    max_paginas = 15
+
+    while pagina <= max_paginas:
+        resultados_api = []
+        listener = lambda r: _capturar_respuesta(r, resultados_api)
+        page.on("response", listener)
+
+        try:
+            if pagina == 1:
+                url = f"{BASE_URL}{url_cat}"
+            else:
+                sep = "&" if "?" in url_cat else "?"
+                url = f"{BASE_URL}{url_cat}{sep}start={(pagina - 1) * 24}"
+
+            page.goto(url, wait_until="networkidle", timeout=30000)
+            time.sleep(1.5)
+
+        except PlaywrightTimeoutError:
+            pass
+        except Exception as e:
+            logger.debug(f"Error en categoría {url_cat} pág {pagina}: {e}")
+        finally:
+            page.remove_listener("response", listener)
+
+        nuevos_pagina = []
+        for item in resultados_api:
+            prods = _parsear_respuesta_empathy(item["data"])
+            for p in prods:
+                if p["Id"] not in resultados_globales:
+                    resultados_globales.add(p["Id"])
+                    p["Categoria"] = nombre_cat
+                    nuevos_pagina.append(p)
+
+        nuevos_total.extend(nuevos_pagina)
+
+        if len(nuevos_pagina) < 3:
+            # Sin productos nuevos → fin de categoría
+            break
+
+        pagina += 1
+
+    return nuevos_total
+
+
+def gestion_carrefour():
+    """
+    Scraper principal de Carrefour con interceptación de red Playwright.
+    """
+    import pandas as pd
+    inicio = time.time()
+    logger.info("Iniciando extracción de Carrefour...")
+
+    todos_productos = []
+    ids_vistos = set()
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+            ]
         )
 
-        productos.append({
-            "Id": pid,
-            "Nombre": nombre,
-            "Precio": precio,
-            "Precio_por_unidad": precio,
-            "Formato": _extraer_formato(nombre),
-            "Categoria": categoria,
-            "Supermercado": "Carrefour",
-            "Url": "",
-            "Url_imagen": "",
-            "Marca": raw.get("brand", ""),
-        })
-
-    return productos
-
-
-def _resolver_categoria_crf(cat_map, cat1, cat2, cat3, fallback):
-    """Resuelve la categoría más específica.
-    cat1/2/3 pueden ser 'catXXXXX-slug' o slug directos."""
-    for cat_val in [cat3, cat2, cat1]:
-        if not cat_val:
-            continue
-        # Buscar catXXXXX pattern
-        m = re.search(r'(cat\d+)', cat_val)
-        if m and m.group(1) in cat_map:
-            return cat_map[m.group(1)]
-        # Buscar como slug directo
-        clean = cat_val.replace('-', ' ').strip()
-        if clean and len(clean) > 2:
-            return clean.title()
-    return fallback
-
-
-# ══════════════════════════════════════════════════════════════
-#  Extracción: DOM
-# ══════════════════════════════════════════════════════════════
-
-def _extraer_dom(page, fallback_cat):
-    """Extrae productos de los product cards renderizados."""
-    try:
-        data = page.evaluate("""
-            () => {
-                const prods = [];
-                const seen = new Set();
-
-                // Selectores amplios para product cards
-                const cards = document.querySelectorAll(
-                    '.product-card-item,' +
-                    '.product-card-list__item,' +
-                    '[class*="product-card"]:not([class*="list"]),' +
-                    '.ebx-result'
-                );
-
-                for (const card of cards) {
-                    try {
-                        // Nombre
-                        let name = '';
-                        const nameEl = card.querySelector(
-                            '[class*="title"] a,' +
-                            '[class*="name"] a,' +
-                            'a[title],' +
-                            'h2 a, h3 a'
-                        );
-                        if (nameEl) {
-                            name = nameEl.getAttribute('title') ||
-                                   nameEl.textContent.trim();
-                        }
-                        if (!name) {
-                            const any = card.querySelector(
-                                '[class*="title"], [class*="name"], h2, h3'
-                            );
-                            if (any) name = any.textContent.trim();
-                        }
-
-                        // URL y ID
-                        const link = card.querySelector(
-                            'a[href*="/p"], a[href*="product"]'
-                        );
-                        const href = link ?
-                            (link.getAttribute('href') || '') : '';
-                        let id = '';
-                        const mR = href.match(/R-(\\d+)/);
-                        if (mR) id = mR[1];
-                        else {
-                            const mNum = href.match(/(\\d{6,})/);
-                            if (mNum) id = mNum[1];
-                        }
-
-                        // Precio
-                        let priceText = '';
-                        const priceEl = card.querySelector(
-                            '[class*="price"]:not([class*="per-unit"]),' +
-                            '[class*="Price"]:not([class*="PerUnit"])'
-                        );
-                        if (priceEl) priceText = priceEl.textContent.trim();
-
-                        // Imagen
-                        const img = card.querySelector('img');
-                        const imgSrc = img ?
-                            (img.src || img.getAttribute('data-src') || '')
-                            : '';
-
-                        if (name && priceText.match(/\\d/) && id &&
-                            !seen.has(id)) {
-                            seen.add(id);
-                            prods.push({
-                                name, priceText, id,
-                                href: href || '', imgSrc
-                            });
-                        }
-                    } catch(e) {}
-                }
-                return prods;
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+            viewport={"width": 1366, "height": 768},
+            locale="es-ES",
+            extra_http_headers={
+                "Accept-Language": "es-ES,es;q=0.9",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
             }
+        )
+
+        page = context.new_page()
+
+        # Enmascarar automatización
+        page.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
         """)
-    except Exception:
-        return []
 
-    productos = []
-    for raw in data:
-        precio = _parse_precio(raw.get("priceText", ""))
-        if precio is None or precio <= 0:
-            continue
-        pid = raw.get("id", "")
-        nombre = raw.get("name", "")
-        if not pid or not nombre:
-            continue
-
-        href = raw.get("href", "")
-        if href and not href.startswith("http"):
-            href = "%s%s" % (BASE, href)
-
-        productos.append({
-            "Id": pid,
-            "Nombre": nombre,
-            "Precio": precio,
-            "Precio_por_unidad": precio,
-            "Formato": _extraer_formato(nombre),
-            "Categoria": fallback_cat,
-            "Supermercado": "Carrefour",
-            "Url": href,
-            "Url_imagen": raw.get("imgSrc", ""),
-            "Marca": _extraer_marca(nombre),
-        })
-
-    return productos
-
-
-# ══════════════════════════════════════════════════════════════
-#  Utilidades
-# ══════════════════════════════════════════════════════════════
-
-def _parse_precio(text):
-    if not text:
-        return None
-    m = re.search(r"(\d+)[,.](\d{1,2})", text)
-    if m:
+        # Visita inicial - aceptar cookies y establecer sesión
+        logger.info("Estableciendo sesión en carrefour.es...")
         try:
-            return float("%s.%s" % (m.group(1), m.group(2)))
-        except (ValueError, TypeError):
-            pass
-    return None
+            page.goto(f"{BASE_URL}/supermercado/", wait_until="domcontentloaded", timeout=20000)
+            _aceptar_cookies(page)
+            time.sleep(2)
+        except Exception as e:
+            logger.warning(f"Error en visita inicial: {e}")
 
+        # FASE 1: Búsqueda por términos (volumen principal)
+        logger.info(f"Fase 1: búsqueda por {len(TERMINOS_BUSQUEDA)} términos...")
+        for i, termino in enumerate(TERMINOS_BUSQUEDA):
+            antes = len(todos_productos)
+            nuevos = _buscar_termino_con_intercepcion(page, termino, ids_vistos)
+            todos_productos.extend(nuevos)
 
-def _extraer_formato(nombre):
-    for pat in [
-        r'(\d+\s*x\s*\d+\s*(?:ml|l|g|kg|cl|ud)\.?)',
-        r'(\d+(?:[.,]\d+)?\s*(?:litros?|l|ml|cl)\.?)',
-        r'(\d+(?:[.,]\d+)?\s*(?:kg|g|gr)\.?)',
-        r'(pack\s*\d+)',
-    ]:
-        m = re.search(pat, nombre, re.IGNORECASE)
-        if m:
-            return m.group(1).strip()
-    return ""
+            if nuevos:
+                logger.info(f"  '{termino}' → {len(nuevos)} nuevos (total: {len(todos_productos)})")
+            else:
+                logger.debug(f"  '{termino}' → 0 nuevos")
 
+            # Pausa para no saturar
+            time.sleep(0.5)
 
-def _extraer_marca(nombre):
-    m = re.match(
-        r'^([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ\s\']+?)(?:\s+[a-záéíóúñ])', nombre
-    )
-    return m.group(1).strip() if m else ""
+        logger.info(f"Fase 1 completada: {len(todos_productos)} productos")
+
+        # FASE 2: Navegación por categorías del menú (complemento)
+        logger.info(f"Fase 2: navegando {len(CATEGORIAS_MENU)} categorías del menú...")
+        for url_cat, nombre_cat in CATEGORIAS_MENU:
+            antes = len(todos_productos)
+            nuevos = _navegar_categoria(page, url_cat, nombre_cat, ids_vistos)
+            todos_productos.extend(nuevos)
+
+            if nuevos:
+                logger.info(f"  Cat '{nombre_cat}': {len(nuevos)} nuevos (total: {len(todos_productos)})")
+
+        browser.close()
+
+    duracion = int(time.time() - inicio)
+    logger.info(f"Carrefour completado: {len(todos_productos)} productos en {duracion // 60}m {duracion % 60}s")
+
+    if not todos_productos:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(todos_productos)
+    df = df[df["Precio"] > 0]
+    df = df.drop_duplicates(subset=["Id"])
+    return df
