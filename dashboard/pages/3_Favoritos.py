@@ -1,36 +1,28 @@
 # -*- coding: utf-8 -*-
-
-"""
-Página del dashboard: Productos favoritos.
-
-Permite marcar productos como favoritos y hacer seguimiento
-de sus precios de un vistazo.
-"""
+"""Página del dashboard: Productos favoritos."""
 
 import sys
 import os
 
-# Añadir raíz del proyecto al path ANTES de los imports del proyecto
 _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
+
+_DB_PATH = os.environ.get(
+    "SUPERMARKET_DB_PATH",
+    os.path.join(_PROJECT_ROOT, "database", "supermercados.db")
+)
 
 import streamlit as st
 from database.database_db_manager import DatabaseManager
 from database.init_db import inicializar_base_datos
 from dashboard.utils.charts import grafico_historico_precio
 
-
 st.title("⭐ Productos favoritos")
 st.markdown("Tus productos marcados como favoritos para seguimiento rápido de precios.")
 
-
-# =============================================================================
-# CONEXIÓN
-# =============================================================================
-inicializar_base_datos()
-db = DatabaseManager()
-
+inicializar_base_datos(_DB_PATH)
+db = DatabaseManager(_DB_PATH)
 
 # =============================================================================
 # AÑADIR FAVORITO
@@ -39,12 +31,11 @@ with st.expander("Añadir producto a favoritos"):
     busqueda_fav = st.text_input(
         "Buscar producto:",
         placeholder="Ej: aceite de oliva, yogur...",
-        key="buscar_fav"
+        key="buscar_fav",
     )
 
     if busqueda_fav:
         df_resultados = db.buscar_productos(nombre=busqueda_fav, limite=15)
-
         if not df_resultados.empty:
             for _, row in df_resultados.iterrows():
                 col_nombre, col_btn = st.columns([4, 1])
@@ -58,12 +49,10 @@ with st.expander("Añadir producto a favoritos"):
         else:
             st.warning(f"No se encontraron productos con '{busqueda_fav}'.")
 
-
 # =============================================================================
 # LISTA DE FAVORITOS
 # =============================================================================
 st.markdown("---")
-
 df_favoritos = db.obtener_favoritos()
 
 if not df_favoritos.empty:
@@ -78,7 +67,7 @@ if not df_favoritos.empty:
                 st.caption(f"{fav['supermercado']} · {fav['formato']}")
 
             with col_precio:
-                if fav['precio']:
+                if fav.get('precio'):
                     st.metric("Último precio", f"{fav['precio']:.2f} €")
                 else:
                     st.write("Sin precio registrado")
@@ -93,12 +82,9 @@ if not df_favoritos.empty:
                 st.plotly_chart(
                     grafico_historico_precio(df_hist, fav['nombre']),
                     use_container_width=True,
-                    key=f"chart_fav_{fav['id']}"
+                    key=f"chart_fav_{fav['id']}",
                 )
 
             st.markdown("---")
 else:
-    st.info(
-        "No tienes productos favoritos. "
-        "Usa el buscador de arriba para añadir productos que quieras seguir."
-    )
+    st.info("No tienes productos favoritos. Usa el buscador de arriba para añadir.")

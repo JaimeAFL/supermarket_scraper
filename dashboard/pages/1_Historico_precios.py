@@ -1,36 +1,28 @@
 # -*- coding: utf-8 -*-
-
-"""
-Página del dashboard: Histórico de precios.
-
-Permite seleccionar un producto y ver su evolución de precio
-a lo largo del tiempo con un gráfico interactivo.
-"""
+"""Página del dashboard: Histórico de precios."""
 
 import sys
 import os
 
-# Añadir raíz del proyecto al path ANTES de los imports del proyecto
 _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
+
+_DB_PATH = os.environ.get(
+    "SUPERMARKET_DB_PATH",
+    os.path.join(_PROJECT_ROOT, "database", "supermercados.db")
+)
 
 import streamlit as st
 from database.database_db_manager import DatabaseManager
 from database.init_db import inicializar_base_datos
 from dashboard.utils.charts import grafico_historico_precio
 
-
 st.title("📈 Histórico de precios")
 st.markdown("Selecciona un producto para ver cómo ha evolucionado su precio.")
 
-
-# =============================================================================
-# CONEXIÓN
-# =============================================================================
-inicializar_base_datos()
-db = DatabaseManager()
-
+inicializar_base_datos(_DB_PATH)
+db = DatabaseManager(_DB_PATH)
 
 # =============================================================================
 # FILTROS
@@ -40,12 +32,10 @@ col_filtro1, col_filtro2 = st.columns(2)
 with col_filtro1:
     df_todos = db.obtener_productos_con_precio_actual()
     supermercados = ['Todos'] + sorted(df_todos['supermercado'].unique().tolist()) if not df_todos.empty else ['Todos']
-
     supermercado_sel = st.selectbox("Supermercado:", supermercados)
 
 with col_filtro2:
     busqueda = st.text_input("Buscar producto:", placeholder="Ej: leche entera, arroz...")
-
 
 # =============================================================================
 # BÚSQUEDA Y SELECCIÓN
@@ -60,11 +50,7 @@ if busqueda:
             for _, row in df_resultados.iterrows()
         }
 
-        seleccion = st.selectbox(
-            f"Productos encontrados ({len(df_resultados)}):",
-            list(opciones.keys())
-        )
-
+        seleccion = st.selectbox(f"Productos encontrados ({len(df_resultados)}):", list(opciones.keys()))
         producto_id = opciones[seleccion]
 
         st.markdown("---")
@@ -73,10 +59,9 @@ if busqueda:
 
         if not df_historico.empty:
             nombre_producto = seleccion.split(" (")[0]
-            precio_actual = df_historico.iloc[-1]['precio']
+            precio_actual   = df_historico.iloc[-1]['precio']
             precio_anterior = df_historico.iloc[-2]['precio'] if len(df_historico) > 1 else precio_actual
-            variacion = precio_actual - precio_anterior
-            num_registros = len(df_historico)
+            variacion       = precio_actual - precio_anterior
 
             col1, col2, col3, col4 = st.columns(4)
             with col1:
@@ -86,7 +71,7 @@ if busqueda:
             with col3:
                 st.metric("Precio máximo", f"{df_historico['precio'].max():.2f} €")
             with col4:
-                st.metric("Registros", num_registros)
+                st.metric("Registros", len(df_historico))
 
             st.plotly_chart(
                 grafico_historico_precio(df_historico, nombre_producto),

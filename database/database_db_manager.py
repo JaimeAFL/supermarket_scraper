@@ -1,480 +1,399 @@
-# -*- coding: utf-8 -*-
+"""database/database_db_manager.py - Gestor de la base de datos SQLite."""
 
-"""
-Gestor de base de datos SQLite.
-
-Proporciona todas las operaciones necesarias para:
-- Insertar y actualizar productos.
-- Registrar precios con timestamp.
-- Consultar históricos de precios.
-- Gestionar equivalencias entre supermercados.
-- Gestionar favoritos.
-"""
-
-import os
 import sqlite3
 import logging
-from datetime import datetime
+import os
 import pandas as pd
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "supermercados.db")
+_DEFAULT_DB = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "database", "supermercados.db")
+)
 
 
 class DatabaseManager:
+    """Gestiona todas las operaciones con la BD SQLite del proyecto.
+
+    Esquema real de la BD:
+      productos : id, id_externo, nombre, supermercado, categoria, formato,
+                  url, url_imagen, fecha_creacion, fecha_actualizacion
+      precios   : id, producto_id, precio, precio_por_unidad, fecha_captura
     """
-    Clase que gestiona todas las operaciones con la base de datos.
-    
-    Uso:
-        db = DatabaseManager()
-        db.guardar_productos(df_mercadona)
-        historial = db.obtener_historico_precios(producto_id=42)
-        db.cerrar()
-    """
-    
-    def __init__(self, db_path=None):
-        """
-        Abre conexión con la base de datos.
-        
-        Args:
-            db_path (str): Ruta al archivo .db. Si no se indica, usa la ruta por defecto.
-        """
-        self.db_path = db_path or DB_PATH
-        self.conn = None
+
+    def __init__(self, db_path: str = None):
+        if db_path is None:
+            db_path = os.environ.get("SUPERMARKET_DB_PATH", _DEFAULT_DB)
+        self.db_path = os.path.abspath(db_path)
+        self._conn = None
         self._conectar()
 
+    # ── Conexión ──────────────────────────────────────────────────────────────
     def _conectar(self):
-        """Crea o recrea la conexión a la base de datos."""
         try:
-            if self.conn:
-                self.conn.close()
-        except Exception:
-            pass
-        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row
-        logger.info(f"Conexión abierta: {self.db_path}")
+            self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            self._conn.row_factory = sqlite3.Row
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA foreign_keys=ON")
+            logger.debug(f"Conexión abierta: {self.db_path}")
+        except sqlite3.Error as e:
+            logger.error(f"Error al conectar con la BD: {e}")
+            raise
 
-    def _obtener_cursor(self):
-        """
-        Devuelve un cursor válido. Si la conexión está rota, reconecta automáticamente.
-        Esto evita errores en Streamlit Cloud cuando el worker se recicla.
-        """
+    def _cursor(self):
+        """Cursor con reconexión automática (necesario en Streamlit Cloud)."""
         try:
-            cursor = self.conn.cursor()
-            cursor.execute("SELECT 1")  # Test rápido
-            return cursor
+            self._conn.execute("SELECT 1")
         except Exception:
-            logger.warning("Conexión perdida, reconectando...")
+            logger.warning("Reconectando a la BD...")
             self._conectar()
-            return self.conn.cursor()
-
-    def _asegurar_conexion(self):
-        """
-        Verifica que la conexión está viva (para uso con pd.read_sql_query).
-        Si está rota, reconecta.
-        
-        Returns:
-            sqlite3.Connection: Conexión válida.
-        """
-        try:
-            self.conn.cursor().execute("SELECT 1")
-        except Exception:
-            logger.warning("Conexión perdida, reconectando...")
-            self._conectar()
-        return self.conn
+        return self._conn.cursor()
 
     def cerrar(self):
-        """Cierra la conexión con la base de datos."""
-        if self.conn:
-            try:
-                self.conn.close()
-            except Exception:
-                pass
-            logger.info("Conexión cerrada.")
+        if self._conn:
+            self._conn.close()
+            logger.debug("Conexión cerrada.")
 
-    # =========================================================================
-    # PRODUCTOS
-    # =========================================================================
+    # ── Guardar productos (llamado por el scraper) ────────────────────────────
+    def guardar_productos(self, df: pd.DataFrame) -> dict:
+        if df is None or df.empty:
+            return {"nuevos": 0, "actualizados": 0, "precios": 0}
 
-    def guardar_productos(self, df):
-        """
-        Inserta o actualiza productos desde un DataFrame del scraper.
-        Por cada producto, también registra el precio actual en la tabla de precios.
-        
-        Args:
-            df (pd.DataFrame): DataFrame con columnas:
-                Id, Nombre, Precio, Precio_por_unidad, Formato,
-                Categoria, Supermercado, Url, Url_imagen
-        
-        Returns:
-            dict: Resumen con productos_nuevos, productos_actualizados y precios_registrados.
-        """
-        cursor = self._obtener_cursor()
-        nuevos = 0
-        actualizados = 0
-        precios_registrados = 0
-        ahora = datetime.now().isoformat()
+        cur    = self._cursor()
+        nuevos = actualizados = precios_ok = 0
+        ts     = datetime.now().isoformat()
 
         for _, row in df.iterrows():
-            id_externo = str(row.get('Id', ''))
-            nombre = str(row.get('Nombre', ''))
-            supermercado = str(row.get('Supermercado', ''))
-            categoria = str(row.get('Categoria', ''))
-            formato = str(row.get('Formato', ''))
-            url = str(row.get('Url', ''))
-            url_imagen = str(row.get('Url_imagen', ''))
-            precio = row.get('Precio')
-            precio_por_unidad = row.get('Precio_por_unidad')
+            try:
+                id_externo   = str(row.get("Id") or "").strip()
+                nombre       = str(row.get("Nombre") or "").strip()
+                supermercado = str(row.get("Supermercado") or "").strip()
 
-            # Intentar insertar el producto (si ya existe, actualizar)
-            cursor.execute("""
-                INSERT INTO productos (id_externo, nombre, supermercado, categoria, formato, url, url_imagen, fecha_actualizacion)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id_externo, supermercado)
-                DO UPDATE SET
-                    nombre = excluded.nombre,
-                    categoria = excluded.categoria,
-                    formato = excluded.formato,
-                    url = excluded.url,
-                    url_imagen = excluded.url_imagen,
-                    fecha_actualizacion = excluded.fecha_actualizacion
-            """, (id_externo, nombre, supermercado, categoria, formato, url, url_imagen, ahora))
+                if not id_externo or not nombre or not supermercado:
+                    continue
 
-            if cursor.rowcount == 1:
-                nuevos += 1
-            else:
-                actualizados += 1
-
-            # Obtener el ID interno del producto
-            cursor.execute(
-                "SELECT id FROM productos WHERE id_externo = ? AND supermercado = ?",
-                (id_externo, supermercado)
-            )
-            producto_id = cursor.fetchone()[0]
-
-            # Registrar el precio actual
-            if precio is not None:
                 try:
-                    precio_float = float(precio)
-                    precio_unidad_float = float(precio_por_unidad) if precio_por_unidad else None
-                    
-                    cursor.execute("""
-                        INSERT INTO precios (producto_id, precio, precio_por_unidad, fecha_captura)
-                        VALUES (?, ?, ?, ?)
-                    """, (producto_id, precio_float, precio_unidad_float, ahora))
-                    precios_registrados += 1
-                except (ValueError, TypeError) as e:
-                    logger.warning(f"Precio inválido para {nombre}: {e}")
+                    precio = float(row.get("Precio", 0))
+                except (ValueError, TypeError):
+                    continue
+                if precio <= 0:
+                    continue
 
-        self.conn.commit()
+                precio_por_unidad = str(row.get("Precio_unidad") or "").strip()
+                categoria         = str(row.get("Categoria") or "").strip()
+                formato           = str(row.get("Formato") or "").strip()
+                url               = str(row.get("URL") or "").strip()
+                url_imagen        = str(row.get("URL_imagen") or "").strip()
 
-        resumen = {
-            'productos_nuevos': nuevos,
-            'productos_actualizados': actualizados,
-            'precios_registrados': precios_registrados
-        }
-        
-        logger.info(
-            f"Guardado: {nuevos} nuevos, {actualizados} actualizados, "
-            f"{precios_registrados} precios registrados."
-        )
-        
-        return resumen
+                cur.execute("""
+                    INSERT INTO productos
+                        (id_externo, nombre, supermercado, categoria, formato,
+                         url, url_imagen, fecha_creacion, fecha_actualizacion)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id_externo, supermercado) DO UPDATE SET
+                        nombre              = excluded.nombre,
+                        categoria           = excluded.categoria,
+                        formato             = excluded.formato,
+                        url                 = excluded.url,
+                        url_imagen          = excluded.url_imagen,
+                        fecha_actualizacion = excluded.fecha_actualizacion
+                """, (id_externo, nombre, supermercado, categoria, formato,
+                      url, url_imagen, ts, ts))
 
-    def buscar_productos(self, nombre=None, supermercado=None, categoria=None, limite=50):
-        """
-        Busca productos por nombre, supermercado y/o categoría.
-        
-        Args:
-            nombre (str): Texto a buscar en el nombre (búsqueda parcial).
-            supermercado (str): Filtrar por supermercado.
-            categoria (str): Filtrar por categoría.
-            limite (int): Número máximo de resultados.
-        
-        Returns:
-            pd.DataFrame: Productos encontrados.
-        """
-        query = "SELECT * FROM productos WHERE 1=1"
-        params = []
+                nuevos += cur.rowcount > 0
 
-        if nombre:
-            query += " AND nombre LIKE ?"
-            params.append(f"%{nombre}%")
-        if supermercado:
-            query += " AND supermercado = ?"
-            params.append(supermercado)
-        if categoria:
-            query += " AND categoria LIKE ?"
-            params.append(f"%{categoria}%")
-        
-        query += f" ORDER BY nombre LIMIT {limite}"
+                cur.execute(
+                    "SELECT id FROM productos WHERE id_externo = ? AND supermercado = ?",
+                    (id_externo, supermercado)
+                )
+                prod_id = cur.fetchone()[0]
 
-        return pd.read_sql_query(query, self._asegurar_conexion(), params=params)
+                fecha_hoy = ts[:10]
+                cur.execute(
+                    "SELECT id FROM precios WHERE producto_id = ? AND fecha_captura LIKE ?",
+                    (prod_id, f"{fecha_hoy}%")
+                )
+                if not cur.fetchone():
+                    cur.execute(
+                        "INSERT INTO precios (producto_id, precio, precio_por_unidad, fecha_captura) VALUES (?, ?, ?, ?)",
+                        (prod_id, precio, precio_por_unidad, ts)
+                    )
+                    precios_ok += 1
+                else:
+                    actualizados += 1
 
-    # =========================================================================
-    # PRECIOS E HISTÓRICO
-    # =========================================================================
+            except Exception as e:
+                logger.debug(f"Error guardando producto: {e}")
 
-    def obtener_historico_precios(self, producto_id):
-        """
-        Obtiene el histórico de precios de un producto.
-        
-        Args:
-            producto_id (int): ID interno del producto.
-        
-        Returns:
-            pd.DataFrame: Histórico con columnas precio, precio_por_unidad, fecha_captura.
-        """
-        query = """
-            SELECT precio, precio_por_unidad, fecha_captura
-            FROM precios
-            WHERE producto_id = ?
-            ORDER BY fecha_captura ASC
-        """
-        return pd.read_sql_query(query, self._asegurar_conexion(), params=[producto_id])
+        self._conn.commit()
+        result = {"nuevos": nuevos, "actualizados": actualizados, "precios": precios_ok}
+        logger.info(f"Guardado: {nuevos} nuevos, {actualizados} actualizados, {precios_ok} precios registrados.")
+        return result
 
-    def obtener_ultimo_precio(self, producto_id):
-        """
-        Obtiene el último precio registrado de un producto.
-        
-        Args:
-            producto_id (int): ID interno del producto.
-        
-        Returns:
-            dict | None: Último precio con fecha, o None si no hay registros.
-        """
-        cursor = self._obtener_cursor()
-        cursor.execute("""
-            SELECT precio, precio_por_unidad, fecha_captura
-            FROM precios
-            WHERE producto_id = ?
-            ORDER BY fecha_captura DESC
-            LIMIT 1
-        """, (producto_id,))
-        
-        row = cursor.fetchone()
-        if row:
+    # ── Estadísticas ──────────────────────────────────────────────────────────
+    def obtener_estadisticas(self) -> dict:
+        cur = self._cursor()
+        try:
+            cur.execute("SELECT COUNT(*) FROM productos")
+            total_prod = cur.fetchone()[0]
+
+            cur.execute("SELECT COUNT(*) FROM precios")
+            total_precios = cur.fetchone()[0]
+
+            cur.execute("SELECT COUNT(DISTINCT supermercado) FROM productos")
+            total_supers = cur.fetchone()[0]
+
+            cur.execute("SELECT COUNT(*) FROM equivalencias")
+            total_equiv = cur.fetchone()[0]
+
+            cur.execute(
+                "SELECT supermercado, COUNT(*) FROM productos GROUP BY supermercado ORDER BY COUNT(*) DESC"
+            )
+            por_super = dict(cur.fetchall())
+
+            cur.execute("SELECT MIN(fecha_captura), MAX(fecha_captura) FROM precios")
+            fechas = cur.fetchone()
+
             return {
-                'precio': row['precio'],
-                'precio_por_unidad': row['precio_por_unidad'],
-                'fecha_captura': row['fecha_captura']
+                "total_productos":            total_prod,
+                "total_registros_precios":    total_precios,
+                "total_supermercados":        total_supers,
+                "total_equivalencias":        total_equiv,
+                "productos_por_supermercado": por_super,
+                "primera_captura":            fechas[0] if fechas else None,
+                "ultima_captura":             fechas[1] if fechas else None,
             }
-        return None
+        except Exception as e:
+            logger.error(f"Error en obtener_estadisticas: {e}")
+            return {
+                "total_productos": 0, "total_registros_precios": 0,
+                "total_supermercados": 0, "total_equivalencias": 0,
+                "productos_por_supermercado": {},
+                "primera_captura": None, "ultima_captura": None,
+            }
 
-    def obtener_productos_con_precio_actual(self, supermercado=None):
-        """
-        Obtiene todos los productos con su último precio registrado.
-        Útil para el dashboard.
-        
-        Args:
-            supermercado (str): Filtrar por supermercado (opcional).
-        
-        Returns:
-            pd.DataFrame: Productos con su precio más reciente.
-        """
-        query = """
-            SELECT 
-                p.id, p.id_externo, p.nombre, p.supermercado, p.categoria,
-                p.formato, p.url, p.url_imagen,
-                pr.precio, pr.precio_por_unidad, pr.fecha_captura
-            FROM productos p
-            INNER JOIN precios pr ON p.id = pr.producto_id
-            INNER JOIN (
-                SELECT producto_id, MAX(fecha_captura) as max_fecha
+    # ── Productos con precio actual ───────────────────────────────────────────
+    def obtener_productos_con_precio_actual(self, supermercado: str = None) -> pd.DataFrame:
+        cur = self._cursor()
+        try:
+            sql = """
+                SELECT
+                    p.id,
+                    p.id_externo        AS retailer_id,
+                    p.nombre,
+                    p.supermercado,
+                    p.categoria,
+                    p.formato,
+                    p.url,
+                    p.url_imagen,
+                    pr.precio,
+                    pr.precio_por_unidad AS precio_unidad,
+                    pr.fecha_captura     AS fecha
+                FROM productos p
+                JOIN precios pr ON pr.id = (
+                    SELECT id FROM precios
+                    WHERE producto_id = p.id
+                    ORDER BY fecha_captura DESC
+                    LIMIT 1
+                )
+            """
+            params = ()
+            if supermercado:
+                sql += " WHERE p.supermercado = ?"
+                params = (supermercado,)
+
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+            return (
+                pd.DataFrame(rows, columns=[d[0] for d in cur.description])
+                if rows else pd.DataFrame()
+            )
+        except Exception as e:
+            logger.error(f"Error en obtener_productos_con_precio_actual: {e}")
+            return pd.DataFrame()
+
+    # ── Búsqueda ──────────────────────────────────────────────────────────────
+    def buscar_productos(self, nombre: str = None, supermercado: str = None,
+                         limite: int = 20) -> pd.DataFrame:
+        cur = self._cursor()
+        try:
+            sql = """
+                SELECT
+                    p.id,
+                    p.id_externo    AS retailer_id,
+                    p.nombre,
+                    p.supermercado,
+                    p.categoria,
+                    p.formato,
+                    (
+                        SELECT precio FROM precios
+                        WHERE producto_id = p.id
+                        ORDER BY fecha_captura DESC
+                        LIMIT 1
+                    ) AS precio
+                FROM productos p
+                WHERE 1=1
+            """
+            params = []
+            if nombre:
+                sql += " AND p.nombre LIKE ?"
+                params.append(f"%{nombre}%")
+            if supermercado:
+                sql += " AND p.supermercado = ?"
+                params.append(supermercado)
+            sql += f" LIMIT {int(limite)}"
+
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+            return (
+                pd.DataFrame(rows, columns=[d[0] for d in cur.description])
+                if rows else pd.DataFrame()
+            )
+        except Exception as e:
+            logger.error(f"Error en buscar_productos: {e}")
+            return pd.DataFrame()
+
+    # ── Histórico de precios ──────────────────────────────────────────────────
+    def obtener_historico_precios(self, producto_id: int) -> pd.DataFrame:
+        cur = self._cursor()
+        try:
+            cur.execute("""
+                SELECT
+                    fecha_captura     AS fecha,
+                    precio,
+                    precio_por_unidad AS precio_unidad
                 FROM precios
-                GROUP BY producto_id
-            ) ultimo ON pr.producto_id = ultimo.producto_id 
-                     AND pr.fecha_captura = ultimo.max_fecha
-        """
-        params = []
-        
-        if supermercado:
-            query += " WHERE p.supermercado = ?"
-            params.append(supermercado)
-        
-        query += " ORDER BY p.nombre"
+                WHERE producto_id = ?
+                ORDER BY fecha_captura ASC
+            """, (producto_id,))
+            rows = cur.fetchall()
+            return (
+                pd.DataFrame(rows, columns=["fecha", "precio", "precio_unidad"])
+                if rows else pd.DataFrame()
+            )
+        except Exception as e:
+            logger.error(f"Error en obtener_historico_precios: {e}")
+            return pd.DataFrame()
 
-        return pd.read_sql_query(query, self._asegurar_conexion(), params=params)
+    # ── Equivalencias ─────────────────────────────────────────────────────────
+    def listar_grupos_equivalencia(self) -> list:
+        cur = self._cursor()
+        try:
+            cur.execute("SELECT DISTINCT nombre_comun FROM equivalencias ORDER BY nombre_comun")
+            return [r[0] for r in cur.fetchall()]
+        except Exception:
+            return []
 
-    # =========================================================================
-    # EQUIVALENCIAS
-    # =========================================================================
+    def obtener_equivalencias(self, nombre_comun: str) -> pd.DataFrame:
+        cur = self._cursor()
+        try:
+            cur.execute("SELECT * FROM equivalencias WHERE nombre_comun = ?", (nombre_comun,))
+            row = cur.fetchone()
+            if not row:
+                return pd.DataFrame()
 
-    def crear_equivalencia(self, nombre_comun, lista_producto_ids):
-        """
-        Crea un grupo de equivalencia entre productos de distintos supermercados.
-        
-        Args:
-            nombre_comun (str): Nombre descriptivo del grupo (ej: "Coca-Cola 2L").
-            lista_producto_ids (list): Lista de IDs internos de productos equivalentes.
-        """
-        cursor = self._obtener_cursor()
-        
-        for producto_id in lista_producto_ids:
-            cursor.execute("""
-                INSERT OR IGNORE INTO equivalencias (nombre_comun, producto_id)
-                VALUES (?, ?)
-            """, (nombre_comun, producto_id))
-        
-        self.conn.commit()
-        logger.info(f"Equivalencia creada: '{nombre_comun}' con {len(lista_producto_ids)} productos.")
+            ids_por_super = {
+                "Mercadona": row["producto_mercadona_id"],
+                "Carrefour": row["producto_carrefour_id"],
+                "Dia":       row["producto_dia_id"],
+                "Alcampo":   row["producto_alcampo_id"],
+                "Eroski":    row["producto_eroski_id"],
+            }
 
-    def obtener_equivalencias(self, nombre_comun):
-        """
-        Obtiene todos los productos de un grupo de equivalencia.
-        
-        Args:
-            nombre_comun (str): Nombre del grupo.
-        
-        Returns:
-            pd.DataFrame: Productos del grupo con su último precio.
-        """
-        query = """
-            SELECT 
-                e.nombre_comun, p.id, p.nombre, p.supermercado, p.formato,
-                pr.precio, pr.fecha_captura
-            FROM equivalencias e
-            INNER JOIN productos p ON e.producto_id = p.id
-            LEFT JOIN precios pr ON p.id = pr.producto_id
-            LEFT JOIN (
-                SELECT producto_id, MAX(fecha_captura) as max_fecha
-                FROM precios
-                GROUP BY producto_id
-            ) ultimo ON pr.producto_id = ultimo.producto_id 
-                     AND pr.fecha_captura = ultimo.max_fecha
-            WHERE e.nombre_comun = ?
-            ORDER BY pr.precio ASC
-        """
-        return pd.read_sql_query(query, self._asegurar_conexion(), params=[nombre_comun])
+            resultados = []
+            for super_name, id_ext in ids_por_super.items():
+                if not id_ext:
+                    continue
+                cur.execute("""
+                    SELECT p.id, p.nombre, p.supermercado, p.formato, pr.precio
+                    FROM productos p
+                    LEFT JOIN precios pr ON pr.id = (
+                        SELECT id FROM precios
+                        WHERE producto_id = p.id
+                        ORDER BY fecha_captura DESC
+                        LIMIT 1
+                    )
+                    WHERE p.id_externo = ? AND p.supermercado = ?
+                """, (id_ext, super_name))
+                r = cur.fetchone()
+                if r:
+                    resultados.append(dict(r))
 
-    def obtener_historico_equivalencia(self, nombre_comun):
-        """
-        Obtiene el histórico de precios de todos los productos de una equivalencia.
-        Ideal para el gráfico comparativo del dashboard.
-        
-        Args:
-            nombre_comun (str): Nombre del grupo de equivalencia.
-        
-        Returns:
-            pd.DataFrame: Histórico con columnas: supermercado, precio, fecha_captura.
-        """
-        query = """
-            SELECT 
-                p.supermercado, p.nombre, pr.precio, pr.fecha_captura
-            FROM equivalencias e
-            INNER JOIN productos p ON e.producto_id = p.id
-            INNER JOIN precios pr ON p.id = pr.producto_id
-            WHERE e.nombre_comun = ?
-            ORDER BY pr.fecha_captura ASC
-        """
-        return pd.read_sql_query(query, self._asegurar_conexion(), params=[nombre_comun])
+            return pd.DataFrame(resultados) if resultados else pd.DataFrame()
+        except Exception as e:
+            logger.error(f"Error en obtener_equivalencias: {e}")
+            return pd.DataFrame()
 
-    def listar_grupos_equivalencia(self):
-        """
-        Lista todos los grupos de equivalencia existentes.
-        
-        Returns:
-            list: Lista de nombres comunes de grupos.
-        """
-        cursor = self._obtener_cursor()
-        cursor.execute("SELECT DISTINCT nombre_comun FROM equivalencias ORDER BY nombre_comun")
-        return [row['nombre_comun'] for row in cursor.fetchall()]
+    def obtener_historico_equivalencia(self, nombre_comun: str) -> pd.DataFrame:
+        df = self.obtener_equivalencias(nombre_comun)
+        if df.empty:
+            return pd.DataFrame()
+        historicos = []
+        for _, row in df.iterrows():
+            hist = self.obtener_historico_precios(row['id'])
+            if not hist.empty:
+                hist['supermercado'] = row['supermercado']
+                hist['nombre']       = row['nombre']
+                historicos.append(hist)
+        return pd.concat(historicos, ignore_index=True) if historicos else pd.DataFrame()
 
-    # =========================================================================
-    # FAVORITOS
-    # =========================================================================
+    def guardar_equivalencia(self, nombre_comun: str, ids_por_super: dict):
+        cur = self._cursor()
+        cur.execute("""
+            INSERT INTO equivalencias
+                (nombre_comun, producto_mercadona_id, producto_carrefour_id,
+                 producto_dia_id, producto_alcampo_id, producto_eroski_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT DO NOTHING
+        """, (
+            nombre_comun,
+            ids_por_super.get("Mercadona"),
+            ids_por_super.get("Carrefour"),
+            ids_por_super.get("Dia"),
+            ids_por_super.get("Alcampo"),
+            ids_por_super.get("Eroski"),
+        ))
+        self._conn.commit()
 
-    def agregar_favorito(self, producto_id):
-        """Marca un producto como favorito."""
-        cursor = self._obtener_cursor()
-        cursor.execute(
-            "INSERT OR IGNORE INTO favoritos (producto_id) VALUES (?)",
-            (producto_id,)
-        )
-        self.conn.commit()
+    # ── Favoritos ─────────────────────────────────────────────────────────────
+    def agregar_favorito(self, producto_id: int):
+        cur = self._cursor()
+        try:
+            cur.execute("INSERT OR IGNORE INTO favoritos (producto_id) VALUES (?)", (producto_id,))
+            self._conn.commit()
+        except Exception as e:
+            logger.error(f"Error añadiendo favorito: {e}")
 
-    def eliminar_favorito(self, producto_id):
-        """Quita un producto de favoritos."""
-        cursor = self._obtener_cursor()
-        cursor.execute(
-            "DELETE FROM favoritos WHERE producto_id = ?",
-            (producto_id,)
-        )
-        self.conn.commit()
+    def eliminar_favorito(self, producto_id: int):
+        cur = self._cursor()
+        try:
+            cur.execute("DELETE FROM favoritos WHERE producto_id = ?", (producto_id,))
+            self._conn.commit()
+        except Exception as e:
+            logger.error(f"Error eliminando favorito: {e}")
 
-    def obtener_favoritos(self):
-        """
-        Obtiene todos los productos favoritos con su último precio.
-        
-        Returns:
-            pd.DataFrame: Favoritos con precio actual.
-        """
-        query = """
-            SELECT 
-                p.id, p.nombre, p.supermercado, p.formato, p.url_imagen,
-                pr.precio, pr.precio_por_unidad, pr.fecha_captura
-            FROM favoritos f
-            INNER JOIN productos p ON f.producto_id = p.id
-            LEFT JOIN precios pr ON p.id = pr.producto_id
-            LEFT JOIN (
-                SELECT producto_id, MAX(fecha_captura) as max_fecha
-                FROM precios
-                GROUP BY producto_id
-            ) ultimo ON pr.producto_id = ultimo.producto_id 
-                     AND pr.fecha_captura = ultimo.max_fecha
-            ORDER BY p.supermercado, p.nombre
-        """
-        return pd.read_sql_query(query, self._asegurar_conexion())
-
-    # =========================================================================
-    # ESTADÍSTICAS
-    # =========================================================================
-
-    def obtener_estadisticas(self):
-        """
-        Obtiene estadísticas generales de la base de datos.
-        
-        Returns:
-            dict: Estadísticas del sistema.
-        """
-        cursor = self._obtener_cursor()
-
-        cursor.execute("SELECT COUNT(*) FROM productos")
-        total_productos = cursor.fetchone()[0]
-
-        cursor.execute("SELECT COUNT(*) FROM precios")
-        total_registros_precios = cursor.fetchone()[0]
-
-        cursor.execute("SELECT COUNT(DISTINCT supermercado) FROM productos")
-        total_supermercados = cursor.fetchone()[0]
-
-        cursor.execute("SELECT COUNT(DISTINCT nombre_comun) FROM equivalencias")
-        total_equivalencias = cursor.fetchone()[0]
-
-        cursor.execute("SELECT COUNT(*) FROM favoritos")
-        total_favoritos = cursor.fetchone()[0]
-
-        cursor.execute("SELECT MIN(fecha_captura), MAX(fecha_captura) FROM precios")
-        row = cursor.fetchone()
-        primera_captura = row[0]
-        ultima_captura = row[1]
-
-        cursor.execute("""
-            SELECT supermercado, COUNT(*) as total 
-            FROM productos 
-            GROUP BY supermercado 
-            ORDER BY total DESC
-        """)
-        productos_por_supermercado = {row['supermercado']: row['total'] for row in cursor.fetchall()}
-
-        return {
-            'total_productos': total_productos,
-            'total_registros_precios': total_registros_precios,
-            'total_supermercados': total_supermercados,
-            'total_equivalencias': total_equivalencias,
-            'total_favoritos': total_favoritos,
-            'primera_captura': primera_captura,
-            'ultima_captura': ultima_captura,
-            'productos_por_supermercado': productos_por_supermercado
-        }
+    def obtener_favoritos(self) -> pd.DataFrame:
+        cur = self._cursor()
+        try:
+            cur.execute("""
+                SELECT p.id, p.nombre, p.supermercado, p.formato,
+                       pr.precio, f.fecha_agregado
+                FROM favoritos f
+                JOIN productos p ON p.id = f.producto_id
+                LEFT JOIN precios pr ON pr.id = (
+                    SELECT id FROM precios
+                    WHERE producto_id = p.id
+                    ORDER BY fecha_captura DESC
+                    LIMIT 1
+                )
+                ORDER BY f.fecha_agregado DESC
+            """)
+            rows = cur.fetchall()
+            return (
+                pd.DataFrame(rows, columns=[d[0] for d in cur.description])
+                if rows else pd.DataFrame()
+            )
+        except Exception as e:
+            logger.error(f"Error en obtener_favoritos: {e}")
+            return pd.DataFrame()
