@@ -1,285 +1,353 @@
 """
 scraper/dia.py - Scraper para Dia
-SOLUCIÓN: Día ha reforzado su protección (error 599 incluso con cookie válida).
-Se abandona el enfoque de llamadas directas a la API y se usa Playwright
-para navegar las categorías e interceptar las respuestas de red.
+
+BUG CORREGIDO: El scraper anterior tardaba 14 minutos y extraía 0 productos.
+Causas:
+  1. Las URLs hardcodeadas (/es/compra-online/seccion/c/LXXX) no existen en Dia.
+     La estructura real del sitio es diferente y los códigos L2001, L3001, etc.
+     eran inventados.
+  2. El filtro de intercepción era demasiado estricto ("/api/v1/products",
+     "/api/v1/plp", "product-search") y no coincidía con las rutas reales de Dia.
+
+SOLUCIÓN:
+  1. Navegar desde la página principal descubriendo las URLs reales del menú.
+  2. Interceptar TODAS las respuestas JSON y filtrar por contenido
+     (arrays de productos) en lugar de filtrar por URL.
+  3. Usar también búsqueda por términos como red de seguridad.
 """
 
 import logging
 import time
-import json
 import re
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 logger = logging.getLogger(__name__)
-
 BASE_URL = "https://www.dia.es"
 
-# Categorías principales del catálogo online de Dia
-# Extraídas del sitemap y navegación del sitio
-CATEGORIAS_DIA = [
-    ("charcuteria-y-quesos", "Charcutería y Quesos", [
-        "jamon-cocido-lacon-fiambres-y-mortadela/c/L2001",
-        "jamon-serrano-iberico-y-cecina/c/L2002",
-        "quesos/c/L2003",
-        "salchichas-y-bacon/c/L2004",
-        "chopped-mortadela-y-pate/c/L2005",
-        "salchichon-chorizo-y-fuet/c/L2006",
-    ]),
-    ("lacteos-y-huevos", "Lácteos y Huevos", [
-        "leche/c/L3001",
-        "yogures-y-postres-lacteos/c/L3002",
-        "mantequilla-y-margarinas/c/L3003",
-        "nata-para-cocinar-y-montar/c/L3004",
-        "huevos/c/L3005",
-        "bebidas-vegetales/c/L3006",
-    ]),
-    ("frescos", "Frescos", [
-        "frutas-y-verduras/c/L4001",
-        "carnes-y-aves/c/L4002",
-        "pescados-y-mariscos/c/L4003",
-        "platos-preparados/c/L4004",
-        "pasta-fresca-y-pizza/c/L4005",
-    ]),
-    ("congelados", "Congelados", [
-        "pescados-y-mariscos-congelados/c/L5001",
-        "verduras-y-legumbres-congeladas/c/L5002",
-        "carnes-y-aves-congeladas/c/L5003",
-        "pizzas-y-platos-preparados-congelados/c/L5004",
-        "helados/c/L5005",
-    ]),
-    ("despensa", "Despensa", [
-        "aceite-y-vinagre/c/L6001",
-        "arroces-y-pastas/c/L6002",
-        "legumbres/c/L6003",
-        "conservas-y-platos-preparados/c/L6004",
-        "salsas-y-especias/c/L6005",
-        "caldos-sopas-y-purés/c/L6006",
-        "sal-azucar-y-harinas/c/L6007",
-    ]),
-    ("desayuno-y-merienda", "Desayuno y Merienda", [
-        "galletas/c/L7001",
-        "cereales/c/L7002",
-        "mermeladas-y-cremas/c/L7003",
-        "miel-y-edulcorantes/c/L7004",
-        "pan-tostado-y-biscotes/c/L7005",
-        "chocolates-y-cacaos/c/L7006",
-        "cafes-e-infusiones/c/L7007",
-        "bolleria-y-pasteleria/c/L7008",
-    ]),
-    ("bebidas", "Bebidas", [
-        "agua/c/L8001",
-        "refrescos/c/L8002",
-        "zumos/c/L8003",
-        "cervezas/c/L8004",
-        "vinos-y-cavas/c/L8005",
-        "otras-bebidas-alcoholicas/c/L8006",
-    ]),
-    ("snacks-y-dulces", "Snacks y Dulces", [
-        "patatas-fritas-y-snacks/c/L9001",
-        "frutos-secos/c/L9002",
-        "aceitunas-y-encurtidos/c/L9003",
-        "caramelos-y-gominolas/c/L9004",
-    ]),
-    ("drogueria", "Droguería", [
-        "detergentes/c/L10001",
-        "suavizantes/c/L10002",
-        "limpiahogar/c/L10003",
-        "papel-higienico-y-cocina/c/L10004",
-        "bolsas-y-film/c/L10005",
-    ]),
-    ("higiene-y-belleza", "Higiene y Belleza", [
-        "geles-y-jabones/c/L11001",
-        "champus-y-acondicionadores/c/L11002",
-        "desodorantes/c/L11003",
-        "higiene-bucal/c/L11004",
-        "cremas-y-cosmetica/c/L11005",
-        "higiene-femenina/c/L11006",
-    ]),
-    ("bebes", "Bebés", [
-        "panales/c/L12001",
-        "alimentacion-bebe/c/L12002",
-        "higiene-bebe/c/L12003",
-    ]),
-    ("mascotas", "Mascotas", [
-        "comida-perros/c/L13001",
-        "comida-gatos/c/L13002",
-        "accesorios-mascotas/c/L13003",
-    ]),
+# Términos de búsqueda como fallback si la navegación por categorías falla
+TERMINOS_DIA = [
+    "leche", "yogur", "queso", "mantequilla", "huevos", "nata",
+    "jamon", "chorizo", "salchichon", "mortadela", "bacon",
+    "pollo", "carne", "ternera", "cerdo", "pescado", "salmon", "atun", "merluza",
+    "fruta", "verdura", "patatas", "tomate", "cebolla",
+    "pan", "cereales", "galletas", "bolleria",
+    "pasta", "arroz", "legumbres", "aceite", "vinagre", "sal", "harina",
+    "conservas", "salsa", "caldo", "sopa",
+    "cafe", "te", "chocolate", "cacao", "miel", "mermelada", "azucar",
+    "agua", "refresco", "zumo", "cerveza", "vino",
+    "patatas fritas", "frutos secos", "aceitunas", "snacks", "helado",
+    "detergente", "suavizante", "lejia", "papel higienico",
+    "gel ducha", "champu", "desodorante", "pasta dientes",
+    "panales", "comida perro", "comida gato",
 ]
 
 
-def _aceptar_cookies(page):
-    """Acepta el banner de cookies si aparece."""
-    try:
-        btn = page.locator("button#onetrust-accept-btn-handler, button[id*='accept'], button[class*='accept-cookie']").first
-        if btn.is_visible(timeout=3000):
-            btn.click()
-            time.sleep(1)
-    except Exception:
-        pass
+class _Acumulador:
+    """Handler de red nombrado (no lambda) para poder registrarlo y quitarlo."""
+    def __init__(self):
+        self.datos = []
+
+    def handler(self, response):
+        """Captura TODA respuesta JSON con status 200 para filtrar después."""
+        if response.status != 200:
+            return
+        content_type = response.headers.get("content-type", "")
+        if "json" not in content_type:
+            return
+        try:
+            data = response.json()
+            # Solo guardar si parece una lista de productos
+            if _parece_productos(data):
+                self.datos.append(data)
+        except Exception:
+            pass
 
 
-def _extraer_productos_de_pagina(page, url_categoria, nombre_categoria):
-    """
-    Navega a la URL de categoría e intercepta las respuestas de la API interna de Dia.
-    Dia usa una API interna en /api/v1/products o similar al cargar cada página de categoría.
-    """
-    productos = []
-    interceptados = []
+def _parece_productos(data):
+    """Devuelve True si el JSON parece contener una lista de productos."""
+    if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
+        primero = data[0]
+        campos_producto = {"name", "price", "id", "code", "ean", "nombre", "precio"}
+        return bool(campos_producto & set(primero.keys()))
 
-    def capturar_respuesta(response):
-        url = response.url
-        # Capturar llamadas a la API de productos de Dia
-        if ("/api/v1/products" in url or
-                "/api/v1/plp" in url or
-                "product-search" in url or
-                "/search?" in url) and response.status == 200:
-            try:
-                data = response.json()
-                interceptados.append(data)
-            except Exception:
-                pass
-
-    page.on("response", capturar_respuesta)
-
-    try:
-        page.goto(url_categoria, wait_until="networkidle", timeout=30000)
-        _aceptar_cookies(page)
-        time.sleep(2)
-
-        # Scroll para cargar lazy-loaded content
-        page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2)")
-        time.sleep(1)
-        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        time.sleep(2)
-
-    except PlaywrightTimeoutError:
-        logger.warning(f"Timeout navegando {url_categoria}")
-    except Exception as e:
-        logger.warning(f"Error navegando {url_categoria}: {e}")
-    finally:
-        page.remove_listener("response", capturar_respuesta)
-
-    # Procesar respuestas interceptadas
-    for data in interceptados:
-        nuevos = _parsear_respuesta_api(data, nombre_categoria)
-        productos.extend(nuevos)
-
-    # Si no se interceptó nada, intentar extracción DOM
-    if not productos:
-        productos = _extraer_dom(page, nombre_categoria)
-
-    return productos
-
-
-def _parsear_respuesta_api(data, categoria):
-    """Parsea la respuesta JSON de la API de Dia."""
-    productos = []
-
-    # Estructura típica de la API de Dia
-    items = []
     if isinstance(data, dict):
-        items = (data.get("products") or
-                 data.get("items") or
-                 data.get("results") or
-                 data.get("data", {}).get("products") or
-                 [])
-    elif isinstance(data, list):
+        for clave in ("products", "items", "results", "data", "productList"):
+            val = data.get(clave)
+            if isinstance(val, list) and len(val) > 0 and isinstance(val[0], dict):
+                return True
+        # Estructura paginada
+        if "pagination" in data or "totalCount" in data or "total" in data:
+            return True
+
+    return False
+
+
+def _parsear_json(data, categoria):
+    """Extrae productos de cualquier estructura JSON de Dia."""
+    productos = []
+
+    # Normalizar a lista de items
+    items = []
+    if isinstance(data, list):
         items = data
+    elif isinstance(data, dict):
+        for clave in ("products", "items", "results", "productList", "data"):
+            val = data.get(clave)
+            if isinstance(val, list):
+                items = val
+                break
+        if not items:
+            # Puede ser un solo producto
+            if "name" in data or "nombre" in data:
+                items = [data]
 
     for item in items:
         if not isinstance(item, dict):
             continue
-
         try:
-            # Extraer precio
-            precio = None
-            precio_info = item.get("price") or item.get("prices") or {}
-            if isinstance(precio_info, dict):
-                precio = (precio_info.get("value") or
-                         precio_info.get("formattedValue") or
-                         precio_info.get("current") or
-                         precio_info.get("sale"))
-            elif isinstance(precio_info, (int, float)):
-                precio = precio_info
-
-            if precio is None:
-                precio = item.get("priceValue") or item.get("currentPrice")
-
-            if precio is None:
+            # Nombre
+            nombre = (item.get("name") or item.get("nombre") or
+                      item.get("title") or item.get("displayName") or "").strip()
+            if not nombre:
                 continue
 
-            # Limpiar precio
-            if isinstance(precio, str):
-                precio = float(re.sub(r"[^\d.,]", "", precio).replace(",", "."))
+            # ID
+            id_prod = str(
+                item.get("code") or item.get("id") or item.get("ean") or
+                item.get("productCode") or item.get("sku") or ""
+            ).strip()
+            if not id_prod:
+                continue
 
-            producto = {
-                "Id": str(item.get("code") or item.get("id") or item.get("ean") or ""),
-                "Nombre": item.get("name") or item.get("title") or "",
-                "Precio": float(precio),
-                "Precio_unidad": item.get("pricePerUnit") or item.get("unitPrice") or "",
-                "Categoria": categoria,
+            # Precio
+            precio = None
+            for campo in ["price", "precio", "salePrice", "currentPrice", "priceValue"]:
+                val = item.get(campo)
+                if val is None:
+                    continue
+                if isinstance(val, dict):
+                    # price: {value: 1.99} o price: {current: 1.99}
+                    val = val.get("value") or val.get("current") or val.get("formattedValue")
+                if val is not None:
+                    try:
+                        if isinstance(val, str):
+                            val = re.sub(r"[^\d.,]", "", val).replace(",", ".")
+                        precio = float(val)
+                        if precio > 0:
+                            break
+                    except (ValueError, TypeError):
+                        continue
+
+            if not precio or precio <= 0:
+                continue
+
+            # Precio por unidad
+            precio_unidad = ""
+            for campo in ["pricePerUnit", "unitPrice", "precioUnidad", "priceUnit"]:
+                val = item.get(campo)
+                if val:
+                    precio_unidad = str(val)
+                    break
+
+            # Imagen
+            imagen = ""
+            for campo in ["imageUrl", "image", "thumbnail", "imagen"]:
+                val = item.get(campo)
+                if isinstance(val, str) and val:
+                    imagen = val
+                    break
+                if isinstance(val, list) and val:
+                    imagen = val[0] if isinstance(val[0], str) else val[0].get("url", "")
+                    break
+
+            productos.append({
+                "Id":           id_prod,
+                "Nombre":       nombre,
+                "Precio":       precio,
+                "Precio_unidad": precio_unidad,
+                "Categoria":    categoria,
                 "Supermercado": "Dia",
-                "URL": f"{BASE_URL}/es/p/{item.get('code', '')}",
-                "URL_imagen": (item.get("images") or [{}])[0].get("url") if item.get("images") else item.get("imageUrl") or "",
-            }
-
-            if producto["Id"] and producto["Nombre"]:
-                productos.append(producto)
-
+                "URL":          f"{BASE_URL}/es/p/{id_prod}",
+                "URL_imagen":   imagen,
+            })
         except Exception:
             continue
 
     return productos
 
 
-def _extraer_dom(page, categoria):
+def _aceptar_cookies(page):
+    try:
+        btn = page.locator(
+            "button#onetrust-accept-btn-handler, "
+            "button[id*='accept-all'], "
+            "button[class*='accept-cookie']"
+        ).first
+        if btn.is_visible(timeout=4000):
+            btn.click()
+            time.sleep(1.5)
+    except Exception:
+        pass
+
+
+def _descubrir_urls_categorias(page):
     """
-    Fallback: extrae productos directamente del DOM renderizado.
-    Funciona cuando no se interceptan respuestas API.
+    Navega la página principal de Dia y extrae las URLs reales del menú de categorías.
+    Así no dependemos de URLs hardcodeadas que pueden no existir.
     """
-    productos = []
+    urls = []
+    try:
+        page.goto(f"{BASE_URL}/es/compra-online/", wait_until="domcontentloaded", timeout=20000)
+        _aceptar_cookies(page)
+        time.sleep(2)
+
+        # Extraer links del menú de categorías
+        links = page.evaluate("""
+            () => {
+                const links = new Set();
+                // Buscar en el menú principal y navegación lateral
+                document.querySelectorAll(
+                    'nav a[href*="/compra-online/"], '
+                    'aside a[href*="/compra-online/"], '
+                    '[class*="menu"] a[href*="/compra-online/"], '
+                    '[class*="nav"] a[href*="/compra-online/"], '
+                    '[class*="category"] a[href*="/compra-online/"]'
+                ).forEach(a => {
+                    if (a.href && !a.href.includes('?') && a.href.length < 150) {
+                        links.add(a.href);
+                    }
+                });
+                return Array.from(links);
+            }
+        """)
+
+        for link in links:
+            # Filtrar solo URLs de categorías reales (no la raíz)
+            if link.count("/") >= 5:  # profundidad mínima de subcategoría
+                nombre = link.rstrip("/").split("/")[-1].replace("-", " ").title()
+                urls.append((link, nombre))
+
+        logger.info(f"Categorías descubiertas en Dia: {len(urls)}")
+
+    except Exception as e:
+        logger.warning(f"No se pudieron descubrir categorías de Dia: {e}")
+
+    return urls
+
+
+def _navegar_categoria(page, url, nombre_cat, ids_vistos):
+    """Navega una categoría interceptando todas las respuestas JSON."""
+    nuevos_total = []
+
+    for pagina in range(1, 15):
+        acum = _Acumulador()
+        page.on("response", acum.handler)
+
+        try:
+            if pagina == 1:
+                url_pag = url
+            else:
+                sep = "&" if "?" in url else "?"
+                url_pag = f"{url}{sep}currentPage={pagina - 1}"
+
+            page.goto(url_pag, wait_until="networkidle", timeout=25000)
+            time.sleep(1.5)
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2)")
+            time.sleep(0.8)
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            time.sleep(1)
+
+        except PlaywrightTimeoutError:
+            pass
+        except Exception as e:
+            logger.debug(f"Error en {url} pág {pagina}: {e}")
+        finally:
+            page.remove_listener("response", acum.handler)
+
+        nuevos_pag = []
+        for data in acum.datos:
+            prods = _parsear_json(data, nombre_cat)
+            for p in prods:
+                if p["Id"] not in ids_vistos:
+                    ids_vistos.add(p["Id"])
+                    nuevos_pag.append(p)
+
+        # También intentar extracción DOM si no hay intercepción
+        if not nuevos_pag and pagina == 1:
+            nuevos_pag = _extraer_dom(page, nombre_cat, ids_vistos)
+
+        nuevos_total.extend(nuevos_pag)
+
+        if len(nuevos_pag) < 5:
+            break  # Sin más resultados
+
+    return nuevos_total
+
+
+def _buscar_termino(page, termino, ids_vistos):
+    """Búsqueda por término como red de seguridad."""
+    acum = _Acumulador()
+    page.on("response", acum.handler)
 
     try:
-        # Esperar a que haya tarjetas de producto
-        page.wait_for_selector(
-            "article[class*='product'], div[class*='product-tile'], li[class*='product']",
-            timeout=8000
-        )
+        url = f"{BASE_URL}/es/search/?q={termino.replace(' ', '+')}"
+        page.goto(url, wait_until="networkidle", timeout=25000)
+        time.sleep(1.5)
+        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        time.sleep(1)
     except PlaywrightTimeoutError:
-        return productos
+        pass
+    except Exception as e:
+        logger.debug(f"Error búsqueda '{termino}': {e}")
+    finally:
+        page.remove_listener("response", acum.handler)
 
+    nuevos = []
+    for data in acum.datos:
+        for p in _parsear_json(data, termino.capitalize()):
+            if p["Id"] not in ids_vistos:
+                ids_vistos.add(p["Id"])
+                nuevos.append(p)
+
+    # Fallback DOM
+    if not nuevos:
+        nuevos = _extraer_dom(page, termino.capitalize(), ids_vistos)
+
+    return nuevos
+
+
+def _extraer_dom(page, categoria, ids_vistos):
+    """Extracción DOM de último recurso."""
+    nuevos = []
     try:
         items = page.evaluate("""
             () => {
                 const results = [];
-                const selectors = [
+                const selectores = [
                     'article[class*="product"]',
                     'div[class*="product-tile"]',
                     'li[class*="product-item"]',
                     '[data-product-code]',
-                    '[data-ean]'
+                    '[data-ean]',
+                    '[data-product-id]'
                 ];
-                
-                let elements = [];
-                for (const sel of selectors) {
-                    elements = document.querySelectorAll(sel);
-                    if (elements.length > 0) break;
+                let elementos = [];
+                for (const sel of selectores) {
+                    elementos = document.querySelectorAll(sel);
+                    if (elementos.length > 0) break;
                 }
-                
-                elements.forEach(el => {
-                    const code = el.dataset.productCode || el.dataset.ean || el.dataset.id || '';
-                    const nameEl = el.querySelector('[class*="name"], [class*="title"], h2, h3');
+                elementos.forEach(el => {
+                    const code = el.dataset.productCode || el.dataset.ean ||
+                                 el.dataset.productId || el.dataset.id || '';
+                    const nameEl  = el.querySelector('[class*="name"],[class*="title"],h2,h3');
                     const priceEl = el.querySelector('[class*="price"]:not([class*="unit"]):not([class*="old"])');
-                    const imgEl = el.querySelector('img');
-                    
+                    const imgEl   = el.querySelector('img');
                     if (code && nameEl && priceEl) {
                         results.push({
-                            code: code,
-                            name: nameEl.innerText.trim(),
+                            code:  code,
+                            name:  nameEl.innerText.trim(),
                             price: priceEl.innerText.trim(),
-                            img: imgEl ? (imgEl.src || imgEl.dataset.src || '') : ''
+                            img:   imgEl ? (imgEl.src || imgEl.dataset.src || '') : ''
                         });
                     }
                 });
@@ -288,157 +356,89 @@ def _extraer_dom(page, categoria):
         """)
 
         for item in items:
+            if item["code"] in ids_vistos:
+                continue
             try:
                 precio_str = re.sub(r"[^\d.,]", "", item["price"]).replace(",", ".")
                 if not precio_str:
                     continue
                 precio = float(precio_str)
-
-                productos.append({
-                    "Id": str(item["code"]),
-                    "Nombre": item["name"],
-                    "Precio": precio,
+                if precio <= 0:
+                    continue
+                ids_vistos.add(item["code"])
+                nuevos.append({
+                    "Id":           str(item["code"]),
+                    "Nombre":       item["name"],
+                    "Precio":       precio,
                     "Precio_unidad": "",
-                    "Categoria": categoria,
+                    "Categoria":    categoria,
                     "Supermercado": "Dia",
-                    "URL": f"{BASE_URL}/es/p/{item['code']}",
-                    "URL_imagen": item.get("img", ""),
+                    "URL":          f"{BASE_URL}/es/p/{item['code']}",
+                    "URL_imagen":   item.get("img", ""),
                 })
             except Exception:
                 continue
-
     except Exception as e:
-        logger.debug(f"Error extracción DOM: {e}")
-
-    return productos
-
-
-def _paginar_categoria(page, url_base, nombre_categoria, pagina_size=48):
-    """Itera páginas de una categoría hasta que no haya más resultados."""
-    todos = []
-    vistos = set()
-    pagina = 1
-
-    while True:
-        # Dia suele usar ?currentPage=N o ?page=N
-        if pagina == 1:
-            url = url_base
-        else:
-            sep = "&" if "?" in url_base else "?"
-            url = f"{url_base}{sep}currentPage={pagina - 1}"
-
-        antes = len(todos)
-        nuevos = _extraer_productos_de_pagina(page, url, nombre_categoria)
-
-        # Filtrar ya vistos
-        for p in nuevos:
-            if p["Id"] and p["Id"] not in vistos:
-                vistos.add(p["Id"])
-                todos.append(p)
-
-        ahora = len(todos)
-
-        if ahora - antes < 5:
-            # Sin productos nuevos significativos → fin de categoría
-            break
-
-        if len(nuevos) < pagina_size:
-            # Última página (devolvió menos de los esperados)
-            break
-
-        pagina += 1
-        if pagina > 20:  # Salvaguarda
-            break
-
-    return todos
+        logger.debug(f"DOM error: {e}")
+    return nuevos
 
 
 def gestion_dia(codigo_postal="28001"):
     """
-    Scraper principal de Dia usando Playwright completo.
-    Navega categorías e intercepta respuestas de la API interna.
+    Scraper principal de Dia.
+    Estrategia doble: descubrimiento de categorías reales + búsqueda por términos.
     """
     import pandas as pd
     inicio = time.time()
     logger.info("Iniciando extracción de Dia con Playwright (modo completo)...")
 
-    todos_productos = []
+    todos = []
+    ids_vistos = set()
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+            ),
             viewport={"width": 1280, "height": 800},
             locale="es-ES",
-            extra_http_headers={
-                "Accept-Language": "es-ES,es;q=0.9",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            }
+            extra_http_headers={"Accept-Language": "es-ES,es;q=0.9"},
         )
-
         page = context.new_page()
 
-        # Primera visita para aceptar cookies y establecer sesión
-        logger.info("Estableciendo sesión en Dia...")
-        try:
-            page.goto(f"{BASE_URL}/es/", wait_until="domcontentloaded", timeout=20000)
-            _aceptar_cookies(page)
+        # Fase 1: descubrir URLs reales del menú y navegar categorías
+        logger.info("Fase 1: descubriendo categorías reales de Dia...")
+        _aceptar_cookies(page)
+        urls_cats = _descubrir_urls_categorias(page)
 
-            # Configurar código postal si hay selector
-            try:
-                cp_btn = page.locator("[class*='postal'], [class*='location'], [data-testid*='postal']").first
-                if cp_btn.is_visible(timeout=3000):
-                    cp_btn.click()
-                    time.sleep(1)
-                    page.fill("input[placeholder*='postal'], input[name*='postal']", codigo_postal)
-                    page.keyboard.press("Enter")
-                    time.sleep(2)
-            except Exception:
-                pass
+        if urls_cats:
+            for url, nombre_cat in urls_cats:
+                nuevos = _navegar_categoria(page, url, nombre_cat, ids_vistos)
+                todos.extend(nuevos)
+                if nuevos:
+                    logger.info(f"  {nombre_cat}: {len(nuevos)} productos (total: {len(todos)})")
+        else:
+            logger.warning("No se encontraron categorías. Pasando directamente a búsqueda por términos.")
 
-        except Exception as e:
-            logger.warning(f"Error en visita inicial: {e}")
-
-        # Navegar categorías
-        total_categorias = sum(len(subs) for _, _, subs in CATEGORIAS_DIA)
-        procesadas = 0
-
-        for seccion, nombre_seccion, subcategorias in CATEGORIAS_DIA:
-            for sub_path in subcategorias:
-                url = f"{BASE_URL}/es/compra-online/{seccion}/{sub_path}"
-                nombre_cat = f"{nombre_seccion}"
-
-                try:
-                    productos_cat = _paginar_categoria(page, url, nombre_cat)
-                    todos_productos.extend(productos_cat)
-                    procesadas += 1
-
-                    if productos_cat:
-                        logger.info(f"  {nombre_cat} ({sub_path.split('/')[0]}): {len(productos_cat)} productos (total: {len(todos_productos)})")
-                    else:
-                        logger.debug(f"  {nombre_cat} ({sub_path.split('/')[0]}): sin productos")
-
-                except Exception as e:
-                    logger.warning(f"  Error en {url}: {e}")
-                    procesadas += 1
+        # Fase 2: búsqueda por términos (cubre lo que la navegación no alcanzó)
+        logger.info(f"Fase 2: búsqueda por {len(TERMINOS_DIA)} términos...")
+        for termino in TERMINOS_DIA:
+            nuevos = _buscar_termino(page, termino, ids_vistos)
+            todos.extend(nuevos)
+            if nuevos:
+                logger.info(f"  '{termino}' → {len(nuevos)} nuevos (total: {len(todos)})")
+            time.sleep(0.3)
 
         browser.close()
 
-    # Deduplicar
-    vistos = set()
-    unicos = []
-    for p in todos_productos:
-        key = (p["Id"], p["Supermercado"])
-        if key not in vistos:
-            vistos.add(key)
-            unicos.append(p)
-
     duracion = int(time.time() - inicio)
-    logger.info(f"Extracción de Dia completada: {len(unicos)} productos en {duracion // 60}m {duracion % 60}s")
+    logger.info(f"Extracción de Dia completada: {len(todos)} productos en {duracion // 60}m {duracion % 60}s")
 
-    if not unicos:
+    if not todos:
         return pd.DataFrame()
 
-    df = pd.DataFrame(unicos)
+    df = pd.DataFrame(todos)
     df = df[df["Precio"] > 0]
     return df
