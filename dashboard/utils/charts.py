@@ -204,12 +204,12 @@ def grafico_distribucion_precios_zoom(df, supermercado=""):
         hovertemplate="Rango: %{x:.2f} €<br>Productos: %{y}<extra></extra>",
     ))
     fig.add_vline(
-        x=mediana, line_dash="dash", line_color="#000000", line_width=4,
+        x=mediana, line_dash="dash", line_color="#000000", line_width=1,
         annotation_text=f"Mediana: {mediana:.2f} €",
         annotation_position="top right",
         annotation_font=dict(size=13, color="#1a1a1a", family="Arial Black"),
-        annotation_bgcolor="rgba(255,255,255,0.95)",
-        annotation_bordercolor="#000000",
+        annotation_bgcolor="rgba(255,255,255,0.85)",
+        annotation_bordercolor="#1a1a1a",
         annotation_borderwidth=1,
     )
     fig.update_layout(
