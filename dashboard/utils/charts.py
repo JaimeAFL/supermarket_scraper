@@ -168,8 +168,12 @@ def grafico_productos_por_supermercado(stats):
 
     fig = go.Figure(go.Bar(
         y=supers, x=cantidades, orientation='h',
-        marker_color=colores, text=cantidades, textposition='auto',
+        marker_color=colores,
+        text=cantidades,
+        textposition='inside',
+        textfont=dict(color="white"),
     ))
+    
     fig.update_layout(
         title="Productos por supermercado",
         xaxis_title="Número de productos",
@@ -217,7 +221,11 @@ def grafico_distribucion_precios_zoom(df, supermercado=""):
         yaxis_title="Número de productos",
         template='plotly_white', height=400,
         annotations=[dict(
-            text=f"<span style='color:{color}'>{en_rango:,} de {total:,}</span> productos mostrados",
+        text=(
+            f"<span style='color:{color}'>{en_rango:,}</span> "
+            f"de "
+            f"<span style='color:{color}'>{total:,}</span> "
+            f"productos mostrados"),
             xref="paper", yref="paper", x=0.98, y=0.95,
             showarrow=False, font=dict(size=11, color="gray"),
             xanchor="right",
