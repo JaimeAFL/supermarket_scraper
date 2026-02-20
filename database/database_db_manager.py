@@ -58,7 +58,11 @@ class DatabaseManager:
     # ── Guardar productos (llamado por el scraper) ────────────────────────────
     def guardar_productos(self, df: pd.DataFrame) -> dict:
         if df is None or df.empty:
-            return {"nuevos": 0, "actualizados": 0, "precios": 0}
+            return {
+                "nuevos": 0, "productos_nuevos": 0,
+                "actualizados": 0, "productos_actualizados": 0,
+                "precios": 0, "precios_registrados": 0,
+            }
 
         cur    = self._cursor()
         nuevos = actualizados = precios_ok = 0
@@ -127,8 +131,19 @@ class DatabaseManager:
                 logger.debug(f"Error guardando producto: {e}")
 
         self._conn.commit()
-        result = {"nuevos": nuevos, "actualizados": actualizados, "precios": precios_ok}
-        logger.info(f"Guardado: {nuevos} nuevos, {actualizados} actualizados, {precios_ok} precios registrados.")
+        # FIX BUG 4: Incluir TODAS las claves que usan main.py y run_scraper.py
+        result = {
+            "nuevos": nuevos,
+            "productos_nuevos": nuevos,
+            "actualizados": actualizados,
+            "productos_actualizados": actualizados,
+            "precios": precios_ok,
+            "precios_registrados": precios_ok,
+        }
+        logger.info(
+            f"Guardado: {nuevos} nuevos, {actualizados} actualizados, "
+            f"{precios_ok} precios registrados."
+        )
         return result
 
     # ── Estadísticas ──────────────────────────────────────────────────────────
@@ -148,11 +163,14 @@ class DatabaseManager:
             total_equiv = cur.fetchone()[0]
 
             cur.execute(
-                "SELECT supermercado, COUNT(*) FROM productos GROUP BY supermercado ORDER BY COUNT(*) DESC"
+                "SELECT supermercado, COUNT(*) FROM productos "
+                "GROUP BY supermercado ORDER BY COUNT(*) DESC"
             )
             por_super = dict(cur.fetchall())
 
-            cur.execute("SELECT MIN(fecha_captura), MAX(fecha_captura) FROM precios")
+            cur.execute(
+                "SELECT MIN(fecha_captura), MAX(fecha_captura) FROM precios"
+            )
             fechas = cur.fetchone()
 
             return {
@@ -174,7 +192,9 @@ class DatabaseManager:
             }
 
     # ── Productos con precio actual ───────────────────────────────────────────
-    def obtener_productos_con_precio_actual(self, supermercado: str = None) -> pd.DataFrame:
+    def obtener_productos_con_precio_actual(
+        self, supermercado: str = None
+    ) -> pd.DataFrame:
         cur = self._cursor()
         try:
             sql = """
@@ -189,7 +209,7 @@ class DatabaseManager:
                     p.url_imagen,
                     pr.precio,
                     pr.precio_por_unidad AS precio_unidad,
-                    pr.fecha_captura     AS fecha
+                    pr.fecha_captura
                 FROM productos p
                 JOIN precios pr ON pr.id = (
                     SELECT id FROM precios
@@ -210,44 +230,95 @@ class DatabaseManager:
                 if rows else pd.DataFrame()
             )
         except Exception as e:
-            logger.error(f"Error en obtener_productos_con_precio_actual: {e}")
+            logger.error(
+                f"Error en obtener_productos_con_precio_actual: {e}"
+            )
             return pd.DataFrame()
 
     # ── Búsqueda ──────────────────────────────────────────────────────────────
-    def buscar_productos(self, nombre: str = None, supermercado: str = None,
-                         limite: int = 20) -> pd.DataFrame:
+    def buscar_productos(
+        self,
+        nombre: str = None,
+        supermercado: str = None,
+        limite: int = 20,
+    ) -> pd.DataFrame:
+        """Busca productos distribuyendo resultados entre supermercados.
+
+        FIX BUG 3: La versión anterior hacía ``SELECT … LIMIT 20`` sin
+        ``ORDER BY``, de modo que siempre devolvía solo Mercadona (los
+        primeros IDs).  Ahora usa ``ROW_NUMBER() OVER (PARTITION BY
+        supermercado)`` para devolver hasta ``limite_por_super`` resultados
+        de *cada* supermercado, garantizando diversidad.
+        """
         cur = self._cursor()
         try:
-            sql = """
-                SELECT
-                    p.id,
-                    p.id_externo    AS retailer_id,
-                    p.nombre,
-                    p.supermercado,
-                    p.categoria,
-                    p.formato,
-                    (
-                        SELECT precio FROM precios
-                        WHERE producto_id = p.id
-                        ORDER BY fecha_captura DESC
-                        LIMIT 1
-                    ) AS precio
-                FROM productos p
-                WHERE 1=1
-            """
-            params = []
-            if nombre:
-                sql += " AND p.nombre LIKE ?"
-                params.append(f"%{nombre}%")
+            # Si se filtra por supermercado, simplemente devolver por nombre
             if supermercado:
-                sql += " AND p.supermercado = ?"
-                params.append(supermercado)
-            sql += f" LIMIT {int(limite)}"
+                sql = """
+                    SELECT
+                        p.id,
+                        p.id_externo AS retailer_id,
+                        p.nombre,
+                        p.supermercado,
+                        p.categoria,
+                        p.formato,
+                        (
+                            SELECT precio FROM precios
+                            WHERE producto_id = p.id
+                            ORDER BY fecha_captura DESC LIMIT 1
+                        ) AS precio
+                    FROM productos p
+                    WHERE p.supermercado = ?
+                """
+                params = [supermercado]
+                if nombre:
+                    sql += " AND p.nombre LIKE ?"
+                    params.append(f"%{nombre}%")
+                sql += f" ORDER BY p.nombre LIMIT {int(limite)}"
+                cur.execute(sql, params)
+            else:
+                # Sin filtro de super → distribuir resultados equitativamente
+                limite_por_super = max(4, int(limite) // 5)
+                sql = """
+                    SELECT id, retailer_id, nombre, supermercado,
+                           categoria, formato, precio
+                    FROM (
+                        SELECT
+                            p.id,
+                            p.id_externo AS retailer_id,
+                            p.nombre,
+                            p.supermercado,
+                            p.categoria,
+                            p.formato,
+                            (
+                                SELECT precio FROM precios
+                                WHERE producto_id = p.id
+                                ORDER BY fecha_captura DESC LIMIT 1
+                            ) AS precio,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY p.supermercado
+                                ORDER BY p.nombre
+                            ) AS rn
+                        FROM productos p
+                        WHERE 1=1
+                """
+                params = []
+                if nombre:
+                    sql += " AND p.nombre LIKE ?"
+                    params.append(f"%{nombre}%")
 
-            cur.execute(sql, params)
+                sql += f"""
+                    ) sub
+                    WHERE sub.rn <= {limite_por_super}
+                    ORDER BY sub.nombre
+                """
+                cur.execute(sql, params)
+
             rows = cur.fetchall()
             return (
-                pd.DataFrame(rows, columns=[d[0] for d in cur.description])
+                pd.DataFrame(
+                    rows, columns=[d[0] for d in cur.description]
+                )
                 if rows else pd.DataFrame()
             )
         except Exception as e:
@@ -256,11 +327,14 @@ class DatabaseManager:
 
     # ── Histórico de precios ──────────────────────────────────────────────────
     def obtener_historico_precios(self, producto_id: int) -> pd.DataFrame:
+        """FIX BUG 1: Devuelve ``fecha_captura`` (no ``fecha``) para que
+        coincida con lo que esperan ``charts.py`` y las páginas del dashboard.
+        """
         cur = self._cursor()
         try:
             cur.execute("""
                 SELECT
-                    fecha_captura     AS fecha,
+                    fecha_captura,
                     precio,
                     precio_por_unidad AS precio_unidad
                 FROM precios
@@ -269,7 +343,10 @@ class DatabaseManager:
             """, (producto_id,))
             rows = cur.fetchall()
             return (
-                pd.DataFrame(rows, columns=["fecha", "precio", "precio_unidad"])
+                pd.DataFrame(
+                    rows,
+                    columns=["fecha_captura", "precio", "precio_unidad"],
+                )
                 if rows else pd.DataFrame()
             )
         except Exception as e:
@@ -280,7 +357,10 @@ class DatabaseManager:
     def listar_grupos_equivalencia(self) -> list:
         cur = self._cursor()
         try:
-            cur.execute("SELECT DISTINCT nombre_comun FROM equivalencias ORDER BY nombre_comun")
+            cur.execute(
+                "SELECT DISTINCT nombre_comun FROM equivalencias "
+                "ORDER BY nombre_comun"
+            )
             return [r[0] for r in cur.fetchall()]
         except Exception:
             return []
@@ -288,7 +368,10 @@ class DatabaseManager:
     def obtener_equivalencias(self, nombre_comun: str) -> pd.DataFrame:
         cur = self._cursor()
         try:
-            cur.execute("SELECT * FROM equivalencias WHERE nombre_comun = ?", (nombre_comun,))
+            cur.execute(
+                "SELECT * FROM equivalencias WHERE nombre_comun = ?",
+                (nombre_comun,),
+            )
             row = cur.fetchone()
             if not row:
                 return pd.DataFrame()
@@ -320,12 +403,17 @@ class DatabaseManager:
                 if r:
                     resultados.append(dict(r))
 
-            return pd.DataFrame(resultados) if resultados else pd.DataFrame()
+            return (
+                pd.DataFrame(resultados) if resultados
+                else pd.DataFrame()
+            )
         except Exception as e:
             logger.error(f"Error en obtener_equivalencias: {e}")
             return pd.DataFrame()
 
-    def obtener_historico_equivalencia(self, nombre_comun: str) -> pd.DataFrame:
+    def obtener_historico_equivalencia(
+        self, nombre_comun: str
+    ) -> pd.DataFrame:
         df = self.obtener_equivalencias(nombre_comun)
         if df.empty:
             return pd.DataFrame()
@@ -336,9 +424,14 @@ class DatabaseManager:
                 hist['supermercado'] = row['supermercado']
                 hist['nombre']       = row['nombre']
                 historicos.append(hist)
-        return pd.concat(historicos, ignore_index=True) if historicos else pd.DataFrame()
+        return (
+            pd.concat(historicos, ignore_index=True)
+            if historicos else pd.DataFrame()
+        )
 
-    def guardar_equivalencia(self, nombre_comun: str, ids_por_super: dict):
+    def guardar_equivalencia(
+        self, nombre_comun: str, ids_por_super: dict
+    ):
         cur = self._cursor()
         cur.execute("""
             INSERT INTO equivalencias
@@ -356,11 +449,38 @@ class DatabaseManager:
         ))
         self._conn.commit()
 
+    def crear_equivalencia(
+        self, nombre_comun: str, lista_producto_ids: list
+    ):
+        """FIX BUG 2: Crea una equivalencia a partir de IDs internos.
+
+        ``product_matcher.py`` trabaja con IDs internos (enteros), pero
+        la tabla ``equivalencias`` almacena ``id_externo`` (texto) por
+        supermercado.  Este método hace la conversión.
+        """
+        cur = self._cursor()
+        ids_por_super = {}
+
+        for pid in lista_producto_ids:
+            cur.execute(
+                "SELECT id_externo, supermercado FROM productos WHERE id = ?",
+                (pid,),
+            )
+            row = cur.fetchone()
+            if row:
+                ids_por_super[row["supermercado"]] = row["id_externo"]
+
+        if ids_por_super:
+            self.guardar_equivalencia(nombre_comun, ids_por_super)
+
     # ── Favoritos ─────────────────────────────────────────────────────────────
     def agregar_favorito(self, producto_id: int):
         cur = self._cursor()
         try:
-            cur.execute("INSERT OR IGNORE INTO favoritos (producto_id) VALUES (?)", (producto_id,))
+            cur.execute(
+                "INSERT OR IGNORE INTO favoritos (producto_id) VALUES (?)",
+                (producto_id,),
+            )
             self._conn.commit()
         except Exception as e:
             logger.error(f"Error añadiendo favorito: {e}")
@@ -368,7 +488,10 @@ class DatabaseManager:
     def eliminar_favorito(self, producto_id: int):
         cur = self._cursor()
         try:
-            cur.execute("DELETE FROM favoritos WHERE producto_id = ?", (producto_id,))
+            cur.execute(
+                "DELETE FROM favoritos WHERE producto_id = ?",
+                (producto_id,),
+            )
             self._conn.commit()
         except Exception as e:
             logger.error(f"Error eliminando favorito: {e}")
@@ -391,7 +514,9 @@ class DatabaseManager:
             """)
             rows = cur.fetchall()
             return (
-                pd.DataFrame(rows, columns=[d[0] for d in cur.description])
+                pd.DataFrame(
+                    rows, columns=[d[0] for d in cur.description]
+                )
                 if rows else pd.DataFrame()
             )
         except Exception as e:
