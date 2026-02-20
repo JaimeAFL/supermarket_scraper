@@ -199,17 +199,17 @@ def grafico_distribucion_precios_zoom(df, supermercado=""):
     fig = go.Figure()
     fig.add_trace(go.Histogram(
         x=precios_zoom, nbinsx=50,
-        marker_color=color, opacity=0.45,
-        marker_line_color=color, marker_line_width=0.5,
+        marker_color=color, opacity=0.25,
+        marker_line_color="#FFFFFF", marker_line_width=1,
         hovertemplate="Rango: %{x:.2f} €<br>Productos: %{y}<extra></extra>",
     ))
     fig.add_vline(
-        x=mediana, line_dash="dash", line_color="#1a1a1a", line_width=2.5,
+        x=mediana, line_dash="dash", line_color="#000000", line_width=4,
         annotation_text=f"Mediana: {mediana:.2f} €",
         annotation_position="top right",
         annotation_font=dict(size=13, color="#1a1a1a", family="Arial Black"),
-        annotation_bgcolor="rgba(255,255,255,0.85)",
-        annotation_bordercolor="#1a1a1a",
+        annotation_bgcolor="rgba(255,255,255,0.95)",
+        annotation_bordercolor="#000000",
         annotation_borderwidth=1,
     )
     fig.update_layout(
