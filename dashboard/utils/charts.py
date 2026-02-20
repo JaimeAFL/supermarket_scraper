@@ -199,13 +199,18 @@ def grafico_distribucion_precios_zoom(df, supermercado=""):
     fig = go.Figure()
     fig.add_trace(go.Histogram(
         x=precios_zoom, nbinsx=50,
-        marker_color=color, opacity=0.85,
+        marker_color=color, opacity=0.45,
+        marker_line_color=color, marker_line_width=0.5,
         hovertemplate="Rango: %{x:.2f} €<br>Productos: %{y}<extra></extra>",
     ))
     fig.add_vline(
-        x=mediana, line_dash="dash", line_color="#E74C3C", line_width=2,
+        x=mediana, line_dash="dash", line_color="#1a1a1a", line_width=2.5,
         annotation_text=f"Mediana: {mediana:.2f} €",
-        annotation_position="top right", annotation_font_size=12,
+        annotation_position="top right",
+        annotation_font=dict(size=13, color="#1a1a1a", family="Arial Black"),
+        annotation_bgcolor="rgba(255,255,255,0.85)",
+        annotation_bordercolor="#1a1a1a",
+        annotation_borderwidth=1,
     )
     fig.update_layout(
         title=f"{supermercado} — 95% de productos (hasta {p95:.0f} €)",
@@ -235,7 +240,8 @@ def grafico_distribucion_precios_completa(df, supermercado=""):
     fig = go.Figure()
     fig.add_trace(go.Histogram(
         x=precios, nbinsx=80,
-        marker_color=color, opacity=0.65,
+        marker_color=color, opacity=0.45,
+        marker_line_color=color, marker_line_width=0.5,
         hovertemplate="Rango: %{x:.2f} €<br>Productos: %{y}<extra></extra>",
     ))
     fig.update_layout(
