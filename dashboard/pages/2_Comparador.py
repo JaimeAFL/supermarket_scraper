@@ -10,107 +10,232 @@ if _PROJECT_ROOT not in sys.path:
 
 _DB_PATH = os.environ.get(
     "SUPERMARKET_DB_PATH",
-    os.path.join(_PROJECT_ROOT, "database", "supermercados.db")
+    os.path.join(_PROJECT_ROOT, "database", "supermercados.db"),
 )
 
 import streamlit as st
+import pandas as pd
 from database.database_db_manager import DatabaseManager
 from database.init_db import inicializar_base_datos
-from matching.product_matcher import ProductMatcher
 from dashboard.utils.charts import (
+    grafico_comparador_precios,
     grafico_comparativa_supermercados,
     grafico_barras_precio_actual,
+    COLORES_SUPERMERCADO,
 )
 
+st.set_page_config(page_title="Comparador", page_icon="⚖️", layout="wide")
 st.title("⚖️ Comparador de supermercados")
-st.markdown("Compara el precio del mismo producto en distintos supermercados.")
+st.markdown("Compara precios del mismo producto entre supermercados.")
 
 inicializar_base_datos(_DB_PATH)
-db      = DatabaseManager(_DB_PATH)
-matcher = ProductMatcher(db)
+db = DatabaseManager(_DB_PATH)
 
-tab1, tab2, tab3 = st.tabs([
-    "Equivalencias guardadas",
-    "Buscar equivalencias",
-    "Auto-detectar equivalencias",
-])
+tab1, tab2 = st.tabs(["🔍 Comparar precios", "💾 Equivalencias guardadas"])
 
-# --- PESTAÑA 1 ---
+# =============================================================================
+# TAB 1 — Comparar precios (búsqueda directa)
+# =============================================================================
 with tab1:
+    busqueda = st.text_input(
+        "Buscar producto:",
+        placeholder="Ej: coca-cola, leche entera, aceite oliva...",
+        key="comparador_busqueda",
+    )
+
+    if busqueda:
+        df = db.buscar_para_comparar(busqueda, limite_por_super=25)
+
+        if df.empty:
+            st.warning(f"No se encontraron productos con '{busqueda}'.")
+        else:
+            # ── Resumen por supermercado ───────────────────────────────────
+            st.markdown("---")
+            st.subheader(f"Resultados para «{busqueda}»")
+
+            resumen = (
+                df.groupby('supermercado')['precio']
+                .agg(['count', 'min', 'median', 'max'])
+                .reset_index()
+            )
+            resumen.columns = [
+                'Supermercado', 'Productos', 'Más barato', 'Mediana', 'Más caro',
+            ]
+
+            # Precio mínimo global (el super más barato)
+            idx_min = resumen['Más barato'].idxmin()
+            super_barato = resumen.loc[idx_min, 'Supermercado']
+            precio_min_global = resumen['Más barato'].min()
+
+            # Añadir columna de diferencia %
+            resumen['vs más barato'] = resumen['Más barato'].apply(
+                lambda x: (
+                    "⭐ Más barato"
+                    if x == precio_min_global
+                    else f"+{((x - precio_min_global) / precio_min_global * 100):.0f}%"
+                )
+            )
+            resumen['Más barato'] = resumen['Más barato'].apply(
+                lambda x: f"€{x:.2f}"
+            )
+            resumen['Mediana'] = resumen['Mediana'].apply(
+                lambda x: f"€{x:.2f}"
+            )
+            resumen['Más caro'] = resumen['Más caro'].apply(
+                lambda x: f"€{x:.2f}"
+            )
+
+            st.dataframe(resumen, use_container_width=True, hide_index=True)
+
+            # ── Gráfico: producto más barato de cada super ────────────────
+            st.markdown("---")
+            st.subheader("Producto más barato por supermercado")
+            st.caption(
+                "Se compara el producto de menor precio de cada supermercado"
+            )
+
+            df_baratos = (
+                df.sort_values('precio')
+                .groupby('supermercado')
+                .first()
+                .reset_index()
+            )
+            st.plotly_chart(
+                grafico_comparador_precios(
+                    df_baratos,
+                    f"Precio más bajo de «{busqueda}» por supermercado",
+                ),
+                use_container_width=True,
+            )
+
+            # ── Tabla completa con filtros ─────────────────────────────────
+            st.markdown("---")
+            st.subheader("Todos los productos encontrados")
+
+            col_f1, col_f2 = st.columns(2)
+            with col_f1:
+                supers_disponibles = sorted(df['supermercado'].unique())
+                supers_sel = st.multiselect(
+                    "Filtrar supermercados:",
+                    supers_disponibles,
+                    default=supers_disponibles,
+                    key="comp_filtro_super",
+                )
+            with col_f2:
+                rango = st.slider(
+                    "Rango de precios (€):",
+                    float(df['precio'].min()),
+                    float(df['precio'].max()),
+                    (float(df['precio'].min()), float(df['precio'].max())),
+                    key="comp_filtro_precio",
+                )
+
+            df_filtrado = df[
+                (df['supermercado'].isin(supers_sel))
+                & (df['precio'] >= rango[0])
+                & (df['precio'] <= rango[1])
+            ].sort_values('precio')
+
+            if not df_filtrado.empty:
+                # Columna de % vs más barato
+                p_min = df_filtrado['precio'].min()
+                df_mostrar = df_filtrado[
+                    ['nombre', 'supermercado', 'precio', 'formato']
+                ].copy()
+                df_mostrar['vs barato'] = df_mostrar['precio'].apply(
+                    lambda x: (
+                        "⭐"
+                        if x == p_min
+                        else f"+{((x - p_min) / p_min * 100):.0f}%"
+                    )
+                )
+                df_mostrar['precio'] = df_mostrar['precio'].apply(
+                    lambda x: f"€{x:.2f}"
+                )
+                st.dataframe(
+                    df_mostrar, use_container_width=True, hide_index=True,
+                )
+                st.caption(f"{len(df_filtrado)} productos mostrados")
+            else:
+                st.info("No hay productos con esos filtros.")
+
+            # ── Guardar como equivalencia ──────────────────────────────────
+            with st.expander("Guardar como equivalencia"):
+                st.markdown(
+                    "Selecciona un producto de cada supermercado para "
+                    "guardarlos como equivalentes y poder seguir su "
+                    "evolución temporal."
+                )
+                nombre_equiv = st.text_input(
+                    "Nombre del grupo:",
+                    value=busqueda.title(),
+                    key="nombre_equiv_nuevo",
+                )
+                ids_sel = st.multiselect(
+                    "Productos equivalentes:",
+                    df['id'].tolist(),
+                    format_func=lambda x: (
+                        f"{df[df['id']==x].iloc[0]['supermercado']} — "
+                        f"€{df[df['id']==x].iloc[0]['precio']:.2f} — "
+                        f"{df[df['id']==x].iloc[0]['nombre']}"
+                    ),
+                    key="ids_equiv_nuevo",
+                )
+                if st.button("Guardar equivalencia", key="btn_guardar_comp"):
+                    if ids_sel and nombre_equiv:
+                        db.crear_equivalencia(nombre_equiv, ids_sel)
+                        st.success(f"Equivalencia «{nombre_equiv}» guardada.")
+                        st.rerun()
+                    else:
+                        st.warning(
+                            "Selecciona al menos un producto y escribe un nombre."
+                        )
+    else:
+        st.info(
+            "Escribe el nombre de un producto para comparar precios "
+            "entre supermercados."
+        )
+
+# =============================================================================
+# TAB 2 — Equivalencias guardadas
+# =============================================================================
+with tab2:
     grupos = db.listar_grupos_equivalencia()
     if grupos:
-        grupo_sel = st.selectbox("Selecciona un grupo de equivalencia:", grupos)
+        grupo_sel = st.selectbox(
+            "Selecciona un grupo de equivalencia:", grupos,
+        )
         if grupo_sel:
             df_equiv = db.obtener_equivalencias(grupo_sel)
             if not df_equiv.empty:
                 st.subheader(f"Precio actual: {grupo_sel}")
-                st.plotly_chart(grafico_barras_precio_actual(df_equiv), use_container_width=True)
+                st.plotly_chart(
+                    grafico_barras_precio_actual(df_equiv),
+                    use_container_width=True,
+                )
 
                 st.subheader("Evolución temporal comparada")
                 df_hist = db.obtener_historico_equivalencia(grupo_sel)
-                st.plotly_chart(grafico_comparativa_supermercados(df_hist), use_container_width=True)
+                if not df_hist.empty and len(df_hist) > 1:
+                    st.plotly_chart(
+                        grafico_comparativa_supermercados(df_hist),
+                        use_container_width=True,
+                    )
+                else:
+                    st.info(
+                        "Se necesitan datos de más de un día para mostrar "
+                        "la evolución temporal. Ejecuta el scraper en "
+                        "distintos días."
+                    )
 
                 with st.expander("Ver detalle"):
                     st.dataframe(
                         df_equiv[['nombre', 'supermercado', 'formato', 'precio']],
-                        use_container_width=True,
-                        hide_index=True,
+                        use_container_width=True, hide_index=True,
                     )
     else:
-        st.info("No hay equivalencias guardadas. Usa 'Buscar equivalencias' para crear algunas.")
-
-# --- PESTAÑA 2 ---
-with tab2:
-    col_busq, col_umbral = st.columns([3, 1])
-    with col_busq:
-        texto_busqueda = st.text_input(
-            "Producto a buscar:",
-            placeholder="Ej: Coca-Cola Zero 2L",
-            key="busqueda_equiv",
+        st.info(
+            "No hay equivalencias guardadas. Usa la pestaña "
+            "«Comparar precios» para buscar productos y guardar "
+            "equivalencias."
         )
-    with col_umbral:
-        umbral = st.slider("Umbral similitud:", 50, 100, 70, key="umbral_equiv")
-
-    if texto_busqueda:
-        df_similares = matcher.buscar_equivalencias_auto(texto_busqueda, umbral=umbral)
-        if not df_similares.empty:
-            st.success(f"Se encontraron {len(df_similares)} productos similares:")
-            st.dataframe(
-                df_similares[['nombre', 'supermercado', 'precio', 'puntuacion']],
-                use_container_width=True,
-                hide_index=True,
-            )
-
-            st.markdown("---")
-            nombre_grupo = st.text_input("Nombre para el grupo:", value=texto_busqueda, key="nombre_grupo_nuevo")
-            ids_seleccionados = st.multiselect(
-                "Selecciona los productos equivalentes:",
-                options=df_similares['id'].tolist(),
-                format_func=lambda x: (
-                    df_similares[df_similares['id'] == x].iloc[0]['nombre']
-                    + f" ({df_similares[df_similares['id'] == x].iloc[0]['supermercado']})"
-                ),
-                default=df_similares['id'].tolist(),
-            )
-
-            if st.button("Guardar equivalencia", key="btn_guardar_equiv"):
-                if ids_seleccionados and nombre_grupo:
-                    matcher.crear_equivalencia_manual(nombre_grupo, ids_seleccionados)
-                    st.success(f"Equivalencia '{nombre_grupo}' guardada.")
-                    st.rerun()
-                else:
-                    st.warning("Selecciona al menos un producto y escribe un nombre.")
-        else:
-            st.warning(f"No se encontraron similares a '{texto_busqueda}' con umbral {umbral}.")
-
-# --- PESTAÑA 3 ---
-with tab3:
-    umbral_auto = st.slider("Umbral para auto-detección:", 70, 100, 85, key="umbral_auto")
-    if st.button("Ejecutar auto-detección", key="btn_auto"):
-        with st.spinner("Buscando equivalencias automáticas..."):
-            creadas = matcher.auto_crear_equivalencias(umbral=umbral_auto)
-        if creadas > 0:
-            st.success(f"Se crearon {creadas} equivalencias automáticas.")
-            st.rerun()
-        else:
-            st.info("No se encontraron nuevas equivalencias con ese umbral.")
