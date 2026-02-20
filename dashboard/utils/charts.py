@@ -209,8 +209,7 @@ def grafico_distribucion_precios_zoom(df, supermercado=""):
         annotation_position="top right",
         annotation_font=dict(size=13, color="#1a1a1a", family="Arial Black"),
         annotation_bgcolor="rgba(255,255,255,0.85)",
-        annotation_bordercolor="#1a1a1a",
-        annotation_borderwidth=1,
+        annotation_borderwidth=0,
     )
     fig.update_layout(
         title=f"{supermercado} — 95% de productos (hasta {p95:.0f} €)",
@@ -218,7 +217,7 @@ def grafico_distribucion_precios_zoom(df, supermercado=""):
         yaxis_title="Número de productos",
         template='plotly_white', height=400,
         annotations=[dict(
-            text=f"{en_rango:,} de {total:,} productos mostrados",
+            text=f"<span style='color:{color}'>{en_rango:,} de {total:,}</span> productos mostrados",
             xref="paper", yref="paper", x=0.98, y=0.95,
             showarrow=False, font=dict(size=11, color="gray"),
             xanchor="right",
