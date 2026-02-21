@@ -2,8 +2,8 @@ name: Scraper Diario de Supermercados
 
 on:
   schedule:
-    # 7:00 AM hora España (UTC+1 invierno / UTC+2 verano)
-    - cron: '0 6 * * *'
+    # 7:00 AM hora España (UTC+1 invierno / UTC+2 verano), cada lunes
+    - cron: '0 6 * * 1'
   workflow_dispatch:
 
 # ─────────────────────────────────────────────────────────────
