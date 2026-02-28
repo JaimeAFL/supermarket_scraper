@@ -69,19 +69,25 @@ _RE_PRODUCTO_ALCAMPO = re.compile(
 # NORMALIZACIÓN DE FORMATO
 # ═══════════════════════════════════════════════════════════════════════
 
-# Regex para extraer pack: "6 x 1 l", "pack 4 x 125 g"
+# Regex para extraer pack: "6 x 1 l", "pack 4 x 125 g", "8x15 ud"
 _RE_FMT_PACK = re.compile(
     r'(?:pack\s*(?:de\s*)?)?'
     r'(\d+)\s*x\s*'
     r'(\d+(?:\.\d+)?)\s*'
-    r'(ml|cl|dl|l|litros?|litro|g|gr|kg|mg)\b',
+    r'(ml|cl|dl|l|litros?|litro|g|gr|kg|mg|uds?\.?|unidades?|cm|m|mts?|metros?)\b',
     re.IGNORECASE,
 )
 
-# Regex para formato simple: "1000 ml", "1.5 l", "450 g"
+# Regex para formato simple: "1000 ml", "1.5 l", "450 g", "20 unidades", "55 m"
 _RE_FMT_SIMPLE = re.compile(
     r'(\d+(?:\.\d+)?)\s*'
-    r'(ml|cl|dl|l|litros?|litro|g|gr|kg|mg)\b',
+    r'(ml|cl|dl|l|litros?|litro|g|gr|kg|mg|uds?\.?|unidades?|cm|m|mts?|metros?)\b',
+    re.IGNORECASE,
+)
+
+# Regex para "N por envase" (Alcampo)
+_RE_FMT_POR_ENVASE = re.compile(
+    r'(\d+)\s*por\s+envase',
     re.IGNORECASE,
 )
 
@@ -98,14 +104,67 @@ def normalizar_formato(formato_raw, nombre=""):
     texto = (formato_raw or "").strip()
 
     # Formato vacío o solo unidad → extraer del nombre
-    if not texto or texto.upper() in ("KILO", "LITRO", "L", "KG"):
+    if not texto:
         texto = nombre or ""
+    elif re.match(r'^\d+$', texto.strip()):
+        # Solo dígitos sin unidad (Alcampo: "1000", "500") → gramos
+        cantidad = float(texto.strip())
+        if cantidad >= 1000:
+            num = cantidad / 1000
+            if num == int(num):
+                return f"{int(num)} kg"
+            return f"{num:.4f}".rstrip('0').rstrip('.') + " kg"
+        else:
+            return f"{int(cantidad)} g"
+    elif texto.upper() in ("KILO", "KG"):
+        # Intentar extraer cantidad del nombre, sino devolver "kg"
+        nombre_norm = re.sub(r'(\d),(\d)', r'\1.\2', nombre or "")
+        m = _RE_FMT_SIMPLE.search(nombre_norm)
+        if m and m.group(2).lower() in ('g', 'gr', 'kg'):
+            return normalizar_formato(m.group(0))
+        return "kg"
+    elif texto.upper() in ("LITRO", "L"):
+        nombre_norm = re.sub(r'(\d),(\d)', r'\1.\2', nombre or "")
+        m = _RE_FMT_SIMPLE.search(nombre_norm)
+        if m and m.group(2).lower() in ('ml', 'cl', 'dl', 'l', 'litro', 'litros'):
+            return normalizar_formato(m.group(0))
+        return "L"
+    elif texto.upper() == "UNIDAD" or texto.lower() == "ud":
+        # Formato es "UNIDAD" → buscar cantidad en el nombre
+        nombre_norm = re.sub(r'(\d),(\d)', r'\1.\2', nombre or "")
+        # "20 unidades", "6 uds", "pack 4 unidades"
+        m = re.search(r'(\d+)\s*(?:unidades?|uds?\.?)\b', nombre_norm, re.IGNORECASE)
+        if m:
+            return f"{m.group(1)} ud"
+        return "1 ud"
+    elif texto.upper() == "DOCENA":
+        nombre_norm = re.sub(r'(\d),(\d)', r'\1.\2', nombre or "")
+        m = re.search(r'(\d+)\s*docenas?', nombre_norm, re.IGNORECASE)
+        n = int(m.group(1)) * 12 if m else 12
+        return f"{n} ud"
+    elif texto.upper() == "LAVADO":
+        nombre_norm = re.sub(r'(\d),(\d)', r'\1.\2', nombre or "")
+        m = re.search(r'(\d+)\s*lavados?', nombre_norm, re.IGNORECASE)
+        if m:
+            return f"{m.group(1)} lavados"
+        return "lavados"
+    elif texto.upper() in ("METRO", "M") or texto == "m":
+        nombre_norm = re.sub(r'(\d),(\d)', r'\1.\2', nombre or "")
+        m = re.search(r'(\d+(?:\.\d+)?)\s*(?:m\b|mts?\b|metros?)', nombre_norm, re.IGNORECASE)
+        if m:
+            return f"{m.group(1)} m"
+        return "m"
 
     if not texto:
         return ""
 
     # Normalizar coma decimal: "1,5" → "1.5"
     texto_norm = re.sub(r'(\d),(\d)', r'\1.\2', texto)
+
+    # "N por envase" → N ud (Alcampo: "40 por envase", "12 por envase")
+    envase_match = _RE_FMT_POR_ENVASE.search(texto_norm)
+    if envase_match:
+        return f"{envase_match.group(1)} ud"
 
     # Intentar pack primero, luego simple
     pack_match = _RE_FMT_PACK.search(texto_norm)
@@ -144,6 +203,16 @@ def normalizar_formato(formato_raw, nombre=""):
         unidad_final = 'mg'
     elif unidad == 'kg':
         unidad_final = 'kg'
+    elif unidad in ('ud', 'ud.', 'uds', 'uds.', 'unidad', 'unidades'):
+        unidad_final = 'ud'
+    elif unidad in ('cm',):
+        if cantidad >= 100:
+            cantidad = round(cantidad / 100, 4)
+            unidad_final = 'm'
+        else:
+            unidad_final = 'cm'
+    elif unidad in ('m', 'mts', 'mt', 'metro', 'metros'):
+        unidad_final = 'm'
     else:
         unidad_final = unidad
 
