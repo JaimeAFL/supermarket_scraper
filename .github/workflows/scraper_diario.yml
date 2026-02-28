@@ -35,7 +35,7 @@ jobs:
           path: export/mercadona.csv
           retention-days: 3
 
-  # ── DIA (API rápida, ~1 min, pero cookie necesita Playwright) ─
+  # ── DIA (API + cookie con Playwright) ────────────────────────
   dia:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -157,7 +157,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [mercadona, dia, carrefour, alcampo, eroski]
-    if: always()  # Ejecutar aunque algún scraper falle
+    if: always()
 
     steps:
       - uses: actions/checkout@v4

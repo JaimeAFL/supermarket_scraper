@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Sistema de equivalencias entre productos de distintos supermercados.
+matching/product_matcher.py — Matching de productos entre supermercados.
 
-Usa búsqueda SQL por palabras clave como método principal (rápido y preciso).
-Fuzzy matching (rapidfuzz) se usa solo como refinamiento opcional.
+Usa el normalizador para comparar productos por tipo_producto + marca,
+con fallback a fuzzy matching si rapidfuzz está disponible.
 """
 
 import logging
@@ -11,121 +11,83 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# Intentar importar rapidfuzz (opcional)
 try:
-    from rapidfuzz import fuzz, process
+    from rapidfuzz import fuzz
     RAPIDFUZZ_DISPONIBLE = True
 except ImportError:
     RAPIDFUZZ_DISPONIBLE = False
-    logger.info("rapidfuzz no disponible — se usará solo búsqueda SQL.")
+
+try:
+    from matching.normalizer import normalizar_producto
+    NORMALIZER_OK = True
+except ImportError:
+    NORMALIZER_OK = False
 
 
 class ProductMatcher:
+
     def __init__(self, db_manager):
         self.db = db_manager
 
-    # ── Manual ────────────────────────────────────────────────────────────────
-    def crear_equivalencia_manual(self, nombre_comun, lista_producto_ids):
-        self.db.crear_equivalencia(nombre_comun, lista_producto_ids)
+    def buscar_equivalencias_auto(self, nombre_producto, supermercado=None,
+                                  umbral=60, limite=30):
+        """Busca productos equivalentes usando normalización + SQL.
 
-    # ── Búsqueda principal: SQL LIKE ──────────────────────────────────────────
-    def buscar_equivalencias_auto(self, nombre_producto, umbral=70, limite=30):
-        """Busca productos similares usando SQL LIKE por palabras clave.
+        1. Normaliza el producto de entrada para extraer su tipo.
+        2. Busca por tipo_producto en la DB (búsqueda precisa).
+        3. Opcionalmente puntúa con rapidfuzz para refinar.
 
-        Mucho más rápido y preciso que fuzzy matching contra 30K productos.
-        Si rapidfuzz está disponible, se usa como segunda pasada para
-        puntuar y ordenar los resultados.
+        Returns:
+            pd.DataFrame con columnas: id, nombre, supermercado, precio,
+                                       tipo_producto, marca, puntuacion
         """
-        # Paso 1: Búsqueda SQL (rápida, cubre todos los supermercados)
+        # Paso 1: búsqueda SQL por tipo (rápida, cross-super)
         df = self.db.buscar_para_comparar(nombre_producto, limite_por_super=limite)
 
         if df.empty:
-            logger.info("No se encontraron productos para '%s'.", nombre_producto)
             return pd.DataFrame()
 
-        # Paso 2 (opcional): Puntuar con rapidfuzz si está disponible
+        # Paso 2: puntuar resultados
         if RAPIDFUZZ_DISPONIBLE:
+            query_lower = nombre_producto.lower().strip()
             df['puntuacion'] = df['nombre'].apply(
-                lambda n: fuzz.token_sort_ratio(nombre_producto.lower(), n.lower())
+                lambda n: fuzz.token_sort_ratio(query_lower, n.lower())
             )
-            df = df[df['puntuacion'] >= umbral].sort_values(
-                'puntuacion', ascending=False,
-            )
+            df = df.sort_values('puntuacion', ascending=False)
         else:
-            # Sin rapidfuzz, asignar puntuación básica por coincidencia
             palabras = nombre_producto.lower().split()
             df['puntuacion'] = df['nombre'].apply(
-                lambda n: sum(
-                    1 for p in palabras if p in n.lower()
-                ) / len(palabras) * 100
+                lambda n: sum(1 for p in palabras if p in n.lower())
+                / max(len(palabras), 1) * 100
             )
             df = df.sort_values('puntuacion', ascending=False)
 
-        return df
+        # Filtrar por supermercado si se pide
+        if supermercado:
+            df = df[df['supermercado'] != supermercado]
 
-    # ── Sugerencias para un producto específico ───────────────────────────────
-    def sugerir_equivalencias_para_producto(self, producto_id, umbral=60):
-        df_ref = self.db.buscar_productos()
-        producto_ref = df_ref[df_ref['id'] == producto_id]
+        return df.head(limite * 5)
 
-        if producto_ref.empty:
+    def sugerir_equivalencias(self, producto_id, limite=10):
+        """Dado un producto existente, sugiere equivalentes en otros supers."""
+        cur = self.db._cursor()
+        cur.execute(
+            "SELECT nombre, supermercado FROM productos WHERE id=?",
+            (producto_id,),
+        )
+        row = cur.fetchone()
+        if not row:
             return pd.DataFrame()
 
-        nombre = producto_ref.iloc[0]['nombre']
-        supermercado_origen = producto_ref.iloc[0]['supermercado']
+        nombre, supermercado = row['nombre'], row['supermercado']
 
-        df_similares = self.buscar_equivalencias_auto(nombre, umbral=umbral)
+        # Extraer tipo para búsqueda más precisa
+        if NORMALIZER_OK:
+            norm = normalizar_producto(nombre, supermercado)
+            query = norm['tipo_producto'] if norm['tipo_producto'] else nombre
+        else:
+            query = nombre
 
-        if df_similares.empty:
-            return pd.DataFrame()
-
-        return df_similares[
-            df_similares['supermercado'] != supermercado_origen
-        ]
-
-    # ── Auto-crear equivalencias ──────────────────────────────────────────────
-    def auto_crear_equivalencias(self, umbral=85):
-        """Crea equivalencias automáticas para productos con nombre muy similar."""
-        if not RAPIDFUZZ_DISPONIBLE:
-            logger.warning(
-                "rapidfuzz no disponible. "
-                "Instala con: pip install rapidfuzz"
-            )
-            return 0
-
-        df_todos = self.db.obtener_productos_con_precio_actual()
-        if df_todos.empty:
-            return 0
-
-        supermercados = df_todos['supermercado'].unique()
-        if len(supermercados) < 2:
-            return 0
-
-        supermercado_ref = supermercados[0]
-        df_ref = df_todos[df_todos['supermercado'] == supermercado_ref]
-
-        equivalencias_creadas = 0
-
-        for _, producto in df_ref.iterrows():
-            nombre = producto['nombre']
-            ids_equivalentes = [producto['id']]
-
-            for otro_super in supermercados[1:]:
-                df_otro = df_todos[df_todos['supermercado'] == otro_super]
-                nombres_otro = df_otro['nombre'].tolist()
-
-                resultado = process.extractOne(
-                    nombre, nombres_otro,
-                    scorer=fuzz.token_sort_ratio,
-                    score_cutoff=umbral,
-                )
-                if resultado:
-                    idx = resultado[2]
-                    ids_equivalentes.append(df_otro.iloc[idx]['id'])
-
-            if len(ids_equivalentes) > 1:
-                self.db.crear_equivalencia(nombre, ids_equivalentes)
-                equivalencias_creadas += 1
-
-        logger.info("Equivalencias automáticas creadas: %d", equivalencias_creadas)
-        return equivalencias_creadas
+        return self.buscar_equivalencias_auto(
+            query, supermercado=supermercado, limite=limite
+        )

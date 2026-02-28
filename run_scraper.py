@@ -10,6 +10,9 @@ Uso:
 
     # Exportar también a CSV (para CI/CD paralelo):
     python run_scraper.py dia --export-csv export/dia.csv
+
+    # Solo CSV, sin tocar la DB:
+    python run_scraper.py dia --export-csv export/dia.csv --skip-db
 """
 
 import sys
@@ -39,18 +42,17 @@ NECESITA_COOKIE = {"dia"}
 
 
 def main():
-    # Parsear argumentos
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     csv_path = None
     if "--export-csv" in sys.argv:
         idx = sys.argv.index("--export-csv")
         if idx + 1 < len(sys.argv):
             csv_path = sys.argv[idx + 1]
-
     skip_db = "--skip-db" in sys.argv
 
     if not args or args[0].lower() not in SCRAPERS:
-        print(f"Uso: python run_scraper.py <{'|'.join(SCRAPERS.keys())}> [--export-csv ruta.csv] [--skip-db]")
+        print(f"Uso: python run_scraper.py <{'|'.join(SCRAPERS.keys())}> "
+              "[--export-csv ruta.csv] [--skip-db]")
         sys.exit(1)
 
     nombre = args[0].lower()
@@ -62,7 +64,6 @@ def main():
 
     import os
 
-    # Solo inicializar DB si no se salta
     db = None
     if not skip_db:
         from database.init_db import inicializar_base_datos
@@ -109,21 +110,17 @@ def main():
         if len(df) < antes:
             logger.info("Deduplicación: %d → %d", antes, len(df))
 
-    # Exportar CSV si se pidió
     if csv_path:
         os.makedirs(os.path.dirname(csv_path) or ".", exist_ok=True)
         df.to_csv(csv_path, index=False)
         logger.info("CSV exportado: %s (%d filas)", csv_path, len(df))
 
-    # Guardar en DB
     if db:
         try:
             r = db.guardar_productos(df)
-            logger.info(
-                "DB: %d nuevos, %d actualizados, %d precios.",
-                r['productos_nuevos'], r['productos_actualizados'],
-                r['precios_registrados'],
-            )
+            logger.info("DB: %d nuevos, %d actualizados, %d precios.",
+                        r['productos_nuevos'], r['productos_actualizados'],
+                        r['precios_registrados'])
         except Exception as e:
             logger.error("Error guardando en DB: %s", e)
         db.cerrar()
