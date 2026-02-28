@@ -88,22 +88,40 @@ def grafico_barras_precio_actual(df_productos):
     return fig
 
 
-def grafico_comparador_precios(df, titulo="Comparativa de precios"):
-    """Gráfico de barras horizontales con formato normalizado en etiquetas."""
+def grafico_comparador_precios(df, titulo="Comparativa de precios",
+                               usar_precio_unitario=False):
+    """Gráfico de barras horizontales con formato normalizado en etiquetas.
+
+    Args:
+        usar_precio_unitario: si True, usa columna 'precio_unitario' en vez de 'precio'
+    """
     if df.empty:
         return _grafico_vacio("No hay datos")
-    df = df.sort_values('precio')
-    precio_min = df['precio'].min()
+
+    col_precio = 'precio_unitario' if usar_precio_unitario and 'precio_unitario' in df.columns else 'precio'
+    df = df.dropna(subset=[col_precio]) if usar_precio_unitario else df
+    if df.empty:
+        return _grafico_vacio("No hay datos con precio unitario calculable")
+
+    df = df.sort_values(col_precio)
+    precio_min = df[col_precio].min()
 
     etiquetas = []
     for _, row in df.iterrows():
         fmt = _get_formato(row)
-        fmt_tag = f" ({fmt})" if fmt else ""
-        pct = ((row['precio'] - precio_min) / precio_min * 100) if precio_min > 0 else 0
-        if pct == 0:
-            etiquetas.append(f"€{row['precio']:.2f}{fmt_tag} — el más barato")
+        precio_val = row[col_precio]
+        # Mostrar unidad si es precio unitario
+        if usar_precio_unitario and 'unidad_precio' in row.index:
+            unidad_tag = f" {row['unidad_precio']}" if row.get('unidad_precio') else ""
         else:
-            etiquetas.append(f"€{row['precio']:.2f}{fmt_tag} (+{pct:.0f}%)")
+            fmt_tag = f" ({fmt})" if fmt else ""
+            unidad_tag = fmt_tag
+
+        pct = ((precio_val - precio_min) / precio_min * 100) if precio_min > 0 else 0
+        if pct == 0:
+            etiquetas.append(f"€{precio_val:.2f}{unidad_tag} — el más barato")
+        else:
+            etiquetas.append(f"€{precio_val:.2f}{unidad_tag} (+{pct:.0f}%)")
 
     colores = [COLORES_SUPERMERCADO.get(s, '#95A5A6') for s in df['supermercado']]
 
@@ -116,14 +134,22 @@ def grafico_comparador_precios(df, titulo="Comparativa de precios"):
         else:
             labels.append(row['supermercado'])
 
+    unidad_eje = ""
+    if usar_precio_unitario and 'unidad_precio' in df.columns:
+        unidad_eje = df['unidad_precio'].dropna().iloc[0] if not df['unidad_precio'].dropna().empty else "€"
+    else:
+        unidad_eje = "€"
+
     fig = go.Figure(go.Bar(
-        y=labels, x=df['precio'], orientation='h', marker_color=colores,
+        y=labels, x=df[col_precio], orientation='h', marker_color=colores,
         text=etiquetas, textposition='outside',
         hovertemplate='%{y}<br>Precio: €%{x:.2f}<extra></extra>'))
-    fig.update_layout(title=titulo, xaxis_title="Precio (€)", xaxis_tickprefix="€",
+    fig.update_layout(title=titulo,
+                      xaxis_title=f"Precio ({unidad_eje})",
+                      xaxis_tickprefix="€",
                       template='plotly_white',
                       height=max(250, len(df) * 45 + 100),
-                      margin=dict(r=160), yaxis=dict(automargin=True))
+                      margin=dict(r=180), yaxis=dict(automargin=True))
     return fig
 
 
