@@ -462,3 +462,64 @@ def normalizar_producto(nombre, supermercado, formato_raw=""):
         "categoria_normalizada": categoria,
         "formato_normalizado": formato_norm,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# PRECIO UNITARIO
+# ═══════════════════════════════════════════════════════════════════════
+
+_RE_PARSE_FMT = re.compile(
+    r'^(?:(\d+)\s*x\s*)?'          # pack opcional: "6 x "
+    r'(\d+(?:\.\d+)?)\s*'          # cantidad
+    r'(L|kg|g|mg|ml|ud|cm|m|lavados?)$',  # unidad
+    re.IGNORECASE,
+)
+
+
+def calcular_precio_unitario(precio, formato_normalizado):
+    """Calcula el precio por unidad estándar (€/L, €/kg, €/ud).
+
+    Args:
+        precio: float, precio del producto
+        formato_normalizado: str, salida de normalizar_formato() (ej: "1 L", "500 g")
+
+    Returns:
+        tuple: (precio_unitario: float|None, unidad: str)
+            - ("1.76", "€/L") si se puede calcular
+            - (None, "") si no hay datos suficientes
+    """
+    if not precio or not formato_normalizado:
+        return None, ""
+
+    fmt = formato_normalizado.strip()
+    m = _RE_PARSE_FMT.match(fmt)
+    if not m:
+        # Formatos standalone: "L", "kg", "m", "lavados"
+        if fmt in ("L", "kg", "ud", "m", "lavados"):
+            return None, ""
+        return None, ""
+
+    pack = int(m.group(1)) if m.group(1) else 1
+    cantidad = float(m.group(2))
+    unidad = m.group(3)
+
+    total_cantidad = pack * cantidad
+    if total_cantidad <= 0:
+        return None, ""
+
+    # Convertir a unidad estándar para el precio
+    if unidad == 'L':
+        return round(precio / total_cantidad, 2), "€/L"
+    elif unidad == 'kg':
+        return round(precio / total_cantidad, 2), "€/kg"
+    elif unidad == 'g':
+        # Convertir a €/kg
+        total_kg = total_cantidad / 1000
+        if total_kg > 0:
+            return round(precio / total_kg, 2), "€/kg"
+    elif unidad in ('ud',):
+        return round(precio / total_cantidad, 2), "€/ud"
+    elif unidad == 'm':
+        return round(precio / total_cantidad, 2), "€/m"
+
+    return None, ""

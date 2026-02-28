@@ -138,7 +138,7 @@ if busqueda:
                 df_nombre = pd.DataFrame()
 
             cols_mostrar = ['nombre', 'supermercado', 'precio', 'marca',
-                            'categoria_normalizada', 'formato']
+                            'categoria_normalizada', 'formato_normalizado']
             cols_mostrar = [c for c in cols_mostrar if c in df_res.columns]
 
             if not df_tipo.empty:
