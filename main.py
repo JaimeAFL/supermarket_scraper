@@ -19,6 +19,11 @@ from datetime import datetime
 from dotenv import load_dotenv
 import pandas as pd
 
+# Forzar PROJECT_ROOT basado en la ubicación REAL de este archivo
+_PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 from scraper.mercadona import gestion_mercadona
 from scraper.carrefour import gestion_carrefour
 from scraper.dia import gestion_dia
@@ -76,17 +81,18 @@ def main():
     logger.info("=" * 60)
     logger.info("SUPERMARKET PRICE TRACKER - Inicio de ejecución")
     logger.info("Fecha: %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    logger.info("Project root: %s", _PROJECT_ROOT)
     logger.info("=" * 60)
 
-    # Inicializar base de datos
-    inicializar_base_datos()
-    db = DatabaseManager()
+    # Inicializar base de datos (ruta absoluta desde init_db.py)
+    db_path = inicializar_base_datos()
+    logger.info("Base de datos: %s", db_path)
+    db = DatabaseManager(db_path)
 
     # Asegurar que Playwright está disponible
     _asegurar_playwright(logger)
 
-    # Obtener cookie automática para Dia (único super que la necesita vía requests)
-    # Carrefour, Alcampo y Eroski usan Playwright directo (no necesitan cookies manuales)
+    # Obtener cookie automática para Dia
     logger.info("")
     logger.info("Configurando cookies automáticas...")
     try:
@@ -168,6 +174,7 @@ def main():
         logger.info("ESTADO DE LA BASE DE DATOS")
         logger.info("  Productos totales:    %s", stats["total_productos"])
         logger.info("  Registros de precios: %s", stats["total_registros_precios"])
+        logger.info("  Días con datos:       %s", stats.get("dias_con_datos", "?"))
         logger.info("  Supermercados:        %s", stats["total_supermercados"])
         logger.info("  Primera captura:      %s", stats["primera_captura"])
         logger.info("  Última captura:       %s", stats["ultima_captura"])

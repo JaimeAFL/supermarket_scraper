@@ -1,0 +1,217 @@
+name: Scraper Semanal de Supermercados
+
+on:
+  schedule:
+    # Lunes a las 7:00 AM hora España (UTC+1 invierno / UTC+2 verano)
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+# ─────────────────────────────────────────────────────────────
+# Cada scraper corre en PARALELO como job independiente.
+# Así Eroski (62 min) no bloquea a Mercadona (21 seg).
+# Si uno falla, los demás siguen y se guardan sus datos.
+# Se ejecuta cada lunes a las 7:00 AM (hora española).
+# ─────────────────────────────────────────────────────────────
+
+jobs:
+
+  # ── MERCADONA (API rápida, ~30 seg) ──────────────────────────
+  mercadona:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+      - name: Ejecutar Mercadona
+        run: python run_scraper.py mercadona --export-csv export/mercadona.csv --skip-db
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mercadona
+          path: export/mercadona.csv
+          retention-days: 3
+
+  # ── DIA (API + cookie con Playwright) ────────────────────────
+  dia:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+      - name: Instalar Playwright (para cookies)
+        run: |
+          playwright install chromium
+          playwright install-deps chromium
+      - name: Configurar .env
+        run: |
+          echo "CODIGO_POSTAL=${{ secrets.CODIGO_POSTAL }}" >> .env
+          echo "COOKIE_DIA=${{ secrets.COOKIE_DIA }}" >> .env
+      - name: Ejecutar Dia
+        run: python run_scraper.py dia --export-csv export/dia.csv --skip-db
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dia
+          path: export/dia.csv
+          retention-days: 3
+
+  # ── CARREFOUR (Playwright, ~15 min) ──────────────────────────
+  carrefour:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+      - name: Instalar Playwright
+        run: |
+          playwright install chromium
+          playwright install-deps chromium
+      - name: Configurar .env
+        run: |
+          echo "CODIGO_POSTAL=${{ secrets.CODIGO_POSTAL }}" >> .env
+          echo "COOKIE_CARREFOUR=${{ secrets.COOKIE_CARREFOUR }}" >> .env
+      - name: Ejecutar Carrefour
+        run: python run_scraper.py carrefour --export-csv export/carrefour.csv --skip-db
+        timeout-minutes: 20
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: carrefour
+          path: export/carrefour.csv
+          retention-days: 3
+
+  # ── ALCAMPO (Playwright, ~17 min) ────────────────────────────
+  alcampo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+      - name: Instalar Playwright
+        run: |
+          playwright install chromium
+          playwright install-deps chromium
+      - name: Configurar .env
+        run: |
+          echo "CODIGO_POSTAL=${{ secrets.CODIGO_POSTAL }}" >> .env
+      - name: Ejecutar Alcampo
+        run: python run_scraper.py alcampo --export-csv export/alcampo.csv --skip-db
+        timeout-minutes: 25
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: alcampo
+          path: export/alcampo.csv
+          retention-days: 3
+
+  # ── EROSKI (Playwright, ~62 min — el más lento) ──────────────
+  eroski:
+    runs-on: ubuntu-latest
+    timeout-minutes: 80
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+      - name: Instalar Playwright
+        run: |
+          playwright install chromium
+          playwright install-deps chromium
+      - name: Configurar .env
+        run: |
+          echo "CODIGO_POSTAL=${{ secrets.CODIGO_POSTAL }}" >> .env
+      - name: Ejecutar Eroski
+        run: python run_scraper.py eroski --export-csv export/eroski.csv --skip-db
+        timeout-minutes: 75
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eroski
+          path: export/eroski.csv
+          retention-days: 3
+
+  # ── MERGE: fusionar todo en la DB y hacer commit ─────────────
+  guardar-en-db:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [mercadona, dia, carrefour, alcampo, eroski]
+    if: always()
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Descargar resultados de Mercadona
+        uses: actions/download-artifact@v4
+        with:
+          name: mercadona
+          path: export/
+        continue-on-error: true
+
+      - name: Descargar resultados de Dia
+        uses: actions/download-artifact@v4
+        with:
+          name: dia
+          path: export/
+        continue-on-error: true
+
+      - name: Descargar resultados de Carrefour
+        uses: actions/download-artifact@v4
+        with:
+          name: carrefour
+          path: export/
+        continue-on-error: true
+
+      - name: Descargar resultados de Alcampo
+        uses: actions/download-artifact@v4
+        with:
+          name: alcampo
+          path: export/
+        continue-on-error: true
+
+      - name: Descargar resultados de Eroski
+        uses: actions/download-artifact@v4
+        with:
+          name: eroski
+          path: export/
+        continue-on-error: true
+
+      - name: Importar resultados a la base de datos
+        run: |
+          ls -la export/ || echo "No hay archivos CSV"
+          python import_results.py export/*.csv || echo "No se pudieron importar resultados"
+
+      - name: Commit y push
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add database/*.db
+          git diff --staged --quiet || git commit -m "Precios actualizados (semanal) - $(date +'%Y-%m-%d %H:%M')"
+          git push

@@ -6,9 +6,9 @@ import os
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DB = os.path.normpath(
-    os.path.join(os.path.dirname(__file__), "..", "database", "supermercados.db")
-)
+# Ruta absoluta basada en la ubicación REAL de este archivo, no en cwd
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+_DEFAULT_DB = os.path.join(_PROJECT_ROOT, "database", "supermercados.db")
 
 
 def inicializar_base_datos(db_path: str = None) -> str:
@@ -18,6 +18,8 @@ def inicializar_base_datos(db_path: str = None) -> str:
 
     db_path = os.path.abspath(db_path)
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
+
+    logger.info("Inicializando BD: %s", db_path)
 
     conn = sqlite3.connect(db_path)
 
@@ -74,6 +76,7 @@ def inicializar_base_datos(db_path: str = None) -> str:
         "marca":                  "TEXT DEFAULT ''",
         "nombre_normalizado":     "TEXT DEFAULT ''",
         "categoria_normalizada":  "TEXT DEFAULT ''",
+        "formato_normalizado":    "TEXT DEFAULT ''",
     }
 
     cur = conn.cursor()
@@ -109,35 +112,33 @@ def inicializar_base_datos(db_path: str = None) -> str:
             "Migrando %d productos sin normalizar...", sin_normalizar
         )
         try:
-            # Importar normalizer (puede no estar disponible en todos los entornos)
             import sys
-            project_root = os.path.abspath(
-                os.path.join(os.path.dirname(__file__), "..")
-            )
-            if project_root not in sys.path:
-                sys.path.insert(0, project_root)
+            if _PROJECT_ROOT not in sys.path:
+                sys.path.insert(0, _PROJECT_ROOT)
             from matching.normalizer import normalizar_producto
 
             cur.execute("""
-                SELECT id, nombre, supermercado FROM productos
+                SELECT id, nombre, supermercado, formato FROM productos
                 WHERE nombre_normalizado IS NULL OR nombre_normalizado = ''
             """)
             rows = cur.fetchall()
 
-            for row_id, nombre, supermercado in rows:
-                r = normalizar_producto(nombre, supermercado)
+            for row_id, nombre, supermercado, formato in rows:
+                r = normalizar_producto(nombre, supermercado, formato or "")
                 cur.execute("""
                     UPDATE productos SET
                         tipo_producto = ?,
                         marca = ?,
                         nombre_normalizado = ?,
-                        categoria_normalizada = ?
+                        categoria_normalizada = ?,
+                        formato_normalizado = ?
                     WHERE id = ?
                 """, (
                     r["tipo_producto"],
                     r["marca"],
                     r["nombre_normalizado"],
                     r["categoria_normalizada"],
+                    r["formato_normalizado"],
                     row_id,
                 ))
 
@@ -150,6 +151,45 @@ def inicializar_base_datos(db_path: str = None) -> str:
             )
         except Exception as e:
             logger.error("Error en migración: %s", e)
+            conn.rollback()
+
+    # ── Migración: rellenar formato_normalizado en productos que ya
+    #    tienen nombre_normalizado pero no formato_normalizado ─────────
+    cur.execute("""
+        SELECT COUNT(*) FROM productos
+        WHERE nombre_normalizado != ''
+          AND (formato_normalizado IS NULL OR formato_normalizado = '')
+    """)
+    sin_formato = cur.fetchone()[0]
+
+    if sin_formato > 0:
+        logger.info("Migrando formato de %d productos...", sin_formato)
+        try:
+            import sys
+            if _PROJECT_ROOT not in sys.path:
+                sys.path.insert(0, _PROJECT_ROOT)
+            from matching.normalizer import normalizar_formato
+
+            cur.execute("""
+                SELECT id, nombre, formato FROM productos
+                WHERE nombre_normalizado != ''
+                  AND (formato_normalizado IS NULL OR formato_normalizado = '')
+            """)
+            rows = cur.fetchall()
+
+            for row_id, nombre, formato in rows:
+                fmt = normalizar_formato(formato or "", nombre)
+                cur.execute(
+                    "UPDATE productos SET formato_normalizado = ? WHERE id = ?",
+                    (fmt, row_id),
+                )
+
+            conn.commit()
+            logger.info("Migración de formato completada: %d productos.", len(rows))
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.error("Error migrando formato: %s", e)
             conn.rollback()
 
     conn.commit()

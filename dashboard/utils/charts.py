@@ -22,6 +22,12 @@ def _col_fecha(df):
     return None
 
 
+def _get_formato(row):
+    """Obtiene el formato normalizado o el original como fallback."""
+    fmt = row.get('formato_normalizado', '') or row.get('formato', '') or ''
+    return fmt.strip()
+
+
 def grafico_historico_precio(df_historico, nombre_producto=""):
     if df_historico.empty:
         return _grafico_vacio("No hay datos de precios disponibles")
@@ -83,20 +89,33 @@ def grafico_barras_precio_actual(df_productos):
 
 
 def grafico_comparador_precios(df, titulo="Comparativa de precios"):
+    """Gráfico de barras horizontales con formato normalizado en etiquetas."""
     if df.empty:
         return _grafico_vacio("No hay datos")
     df = df.sort_values('precio')
     precio_min = df['precio'].min()
+
     etiquetas = []
     for _, row in df.iterrows():
+        fmt = _get_formato(row)
+        fmt_tag = f" ({fmt})" if fmt else ""
         pct = ((row['precio'] - precio_min) / precio_min * 100) if precio_min > 0 else 0
         if pct == 0:
-            etiquetas.append(f"€{row['precio']:.2f} (el más barato)")
+            etiquetas.append(f"€{row['precio']:.2f}{fmt_tag} — el más barato")
         else:
-            etiquetas.append(f"€{row['precio']:.2f} (+{pct:.0f}%)")
+            etiquetas.append(f"€{row['precio']:.2f}{fmt_tag} (+{pct:.0f}%)")
+
     colores = [COLORES_SUPERMERCADO.get(s, '#95A5A6') for s in df['supermercado']]
-    labels = [f"{row['supermercado']}<br><sub>{row.get('formato','')}</sub>"
-              for _, row in df.iterrows()]
+
+    # Labels del eje Y: supermercado + formato
+    labels = []
+    for _, row in df.iterrows():
+        fmt = _get_formato(row)
+        if fmt:
+            labels.append(f"{row['supermercado']}<br><sub>{fmt}</sub>")
+        else:
+            labels.append(row['supermercado'])
+
     fig = go.Figure(go.Bar(
         y=labels, x=df['precio'], orientation='h', marker_color=colores,
         text=etiquetas, textposition='outside',
@@ -104,7 +123,7 @@ def grafico_comparador_precios(df, titulo="Comparativa de precios"):
     fig.update_layout(title=titulo, xaxis_title="Precio (€)", xaxis_tickprefix="€",
                       template='plotly_white',
                       height=max(250, len(df) * 45 + 100),
-                      margin=dict(r=120), yaxis=dict(automargin=True))
+                      margin=dict(r=160), yaxis=dict(automargin=True))
     return fig
 
 

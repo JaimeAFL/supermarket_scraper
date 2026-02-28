@@ -38,7 +38,7 @@ if not os.path.exists(_DB_PATH):
     st.stop()
 
 st.title("🛒 Supermarket Price Tracker")
-st.markdown("Comparador de precios de supermercados españoles con histórico diario.")
+st.markdown("Comparador de precios de supermercados españoles con histórico semanal.")
 
 # ── Métricas ──────────────────────────────────────────────────────────
 stats = db.obtener_estadisticas()
@@ -59,7 +59,7 @@ with col5:
 
 if dias <= 1:
     st.info("📊 Datos de un solo día. El histórico se construye ejecutando "
-            "el scraper diariamente.")
+            "el scraper semanalmente.")
 
 st.markdown("---")
 

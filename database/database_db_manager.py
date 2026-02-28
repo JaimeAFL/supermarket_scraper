@@ -4,13 +4,13 @@ import sqlite3
 import logging
 import os
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, date
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DB = os.path.normpath(
-    os.path.join(os.path.dirname(__file__), "..", "database", "supermercados.db")
-)
+# Ruta absoluta basada en ubicación REAL de este archivo
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+_DEFAULT_DB = os.path.join(_PROJECT_ROOT, "database", "supermercados.db")
 
 # Importar normalizador (graceful fallback)
 try:
@@ -29,6 +29,7 @@ class DatabaseManager:
         self.db_path = os.path.abspath(db_path)
         self._conn = None
         self._conectar()
+        logger.info("DB conectada: %s", self.db_path)
 
     # ── Conexión ──────────────────────────────────────────────────────
     def _conectar(self):
@@ -48,7 +49,7 @@ class DatabaseManager:
         if self._conn:
             self._conn.close()
 
-    # ── Guardar productos (con normalización) ─────────────────────────
+    # ── Guardar productos (con normalización + formato) ───────────────
     def guardar_productos(self, df: pd.DataFrame) -> dict:
         if df is None or df.empty:
             return {"nuevos": 0, "productos_nuevos": 0,
@@ -56,8 +57,9 @@ class DatabaseManager:
                     "precios": 0, "precios_registrados": 0}
 
         cur = self._cursor()
-        nuevos = actualizados = precios_ok = 0
+        nuevos = actualizados = precios_ok = precios_skip = 0
         ts = datetime.now().isoformat()
+        fecha_hoy = date.today().isoformat()  # "2026-02-28"
 
         for _, row in df.iterrows():
             try:
@@ -81,24 +83,26 @@ class DatabaseManager:
 
                 # ── Normalización ──
                 if _NORMALIZER_OK:
-                    norm = normalizar_producto(nombre, supermercado)
+                    norm = normalizar_producto(nombre, supermercado, formato)
                     tipo_producto         = norm["tipo_producto"]
                     marca                 = norm["marca"]
                     nombre_normalizado    = norm["nombre_normalizado"]
                     categoria_normalizada = norm["categoria_normalizada"]
+                    formato_normalizado   = norm["formato_normalizado"]
                 else:
                     tipo_producto = nombre
                     marca = ""
                     nombre_normalizado = nombre.lower().strip()
                     categoria_normalizada = ""
+                    formato_normalizado = formato
 
                 cur.execute("""
                     INSERT INTO productos
                         (id_externo, nombre, supermercado, categoria, formato,
                          url, url_imagen, fecha_creacion, fecha_actualizacion,
                          tipo_producto, marca, nombre_normalizado,
-                         categoria_normalizada)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                         categoria_normalizada, formato_normalizado)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     ON CONFLICT(id_externo, supermercado) DO UPDATE SET
                         nombre                = excluded.nombre,
                         categoria             = excluded.categoria,
@@ -109,11 +113,12 @@ class DatabaseManager:
                         tipo_producto         = excluded.tipo_producto,
                         marca                 = excluded.marca,
                         nombre_normalizado    = excluded.nombre_normalizado,
-                        categoria_normalizada = excluded.categoria_normalizada
+                        categoria_normalizada = excluded.categoria_normalizada,
+                        formato_normalizado   = excluded.formato_normalizado
                 """, (id_externo, nombre, supermercado, categoria, formato,
                       url, url_imagen, ts, ts,
                       tipo_producto, marca, nombre_normalizado,
-                      categoria_normalizada))
+                      categoria_normalizada, formato_normalizado))
                 nuevos += cur.rowcount > 0
 
                 cur.execute(
@@ -123,11 +128,12 @@ class DatabaseManager:
                 )
                 prod_id = cur.fetchone()[0]
 
-                fecha_hoy = ts[:10]
+                # ── Insertar precio: 1 registro por producto por DÍA ──
+                # Usar DATE() para comparación robusta (no LIKE)
                 cur.execute(
                     "SELECT id FROM precios "
-                    "WHERE producto_id=? AND fecha_captura LIKE ?",
-                    (prod_id, f"{fecha_hoy}%"),
+                    "WHERE producto_id=? AND DATE(fecha_captura)=?",
+                    (prod_id, fecha_hoy),
                 )
                 if not cur.fetchone():
                     cur.execute(
@@ -138,11 +144,19 @@ class DatabaseManager:
                     )
                     precios_ok += 1
                 else:
-                    actualizados += 1
+                    precios_skip += 1
             except Exception as e:
                 logger.debug("Error guardando producto: %s", e)
 
         self._conn.commit()
+
+        logger.info(
+            "guardar_productos [%s]: fecha_hoy=%s, "
+            "precios_insertados=%d, precios_ya_existían=%d",
+            supermercado if 'supermercado' in dir() else "?",
+            fecha_hoy, precios_ok, precios_skip,
+        )
+
         return {"nuevos": nuevos, "productos_nuevos": nuevos,
                 "actualizados": actualizados, "productos_actualizados": actualizados,
                 "precios": precios_ok, "precios_registrados": precios_ok}
@@ -169,10 +183,9 @@ class DatabaseManager:
             )
             fechas = cur.fetchone()
             cur.execute(
-                "SELECT COUNT(DISTINCT substr(fecha_captura,1,10)) FROM precios"
+                "SELECT COUNT(DISTINCT DATE(fecha_captura)) FROM precios"
             )
             dias_datos = cur.fetchone()[0]
-            # Categorías normalizadas
             cur.execute("""
                 SELECT categoria_normalizada, COUNT(*) FROM productos
                 WHERE categoria_normalizada != ''
@@ -209,6 +222,7 @@ class DatabaseManager:
                        p.url, p.url_imagen,
                        p.tipo_producto, p.marca,
                        p.nombre_normalizado, p.categoria_normalizada,
+                       p.formato_normalizado,
                        pr.precio, pr.precio_por_unidad AS precio_unidad,
                        pr.fecha_captura
                 FROM productos p
@@ -229,42 +243,28 @@ class DatabaseManager:
             logger.error("obtener_productos_con_precio_actual: %s", e)
             return pd.DataFrame()
 
-    # ── Búsqueda inteligente (3 prioridades: tipo → marca → nombre) ──
+    # ── Búsqueda inteligente ──────────────────────────────────────────
     def buscar_productos(self, nombre=None, supermercado=None, limite=25):
-        """Búsqueda inteligente con 3 niveles de prioridad:
-        1. tipo_producto: primera palabra empieza, resto contenidas
-        2. marca: todas las palabras contenidas en la marca
-        3. nombre: todas las palabras contenidas (fallback)
-
-        Buscar 'leche' → lácteos primero (tipo), no café con leche.
-        Buscar 'coca cola' → encuentra por marca cuando tipo es 'refresco'.
-        Distribuye resultados entre todos los supermercados.
-        """
         cur = self._cursor()
         try:
             limite_por_super = max(5, int(limite) // 5)
-            palabras = nombre.strip().lower().split() if nombre else []
+            palabras = nombre.strip().split() if nombre else []
 
             if not palabras:
                 return pd.DataFrame()
 
-            # Prioridad 1: tipo — primera palabra empieza, resto contenidas
-            tipo_conds = ["p.nombre_normalizado LIKE ?"]
-            params_tipo = [f"{palabras[0]}%"]
-            for p in palabras[1:]:
-                tipo_conds.append("p.nombre_normalizado LIKE ?")
-                params_tipo.append(f"%{p}%")
-            tipo_sql = " AND ".join(tipo_conds)
+            where_tipo = []
+            where_nombre = []
+            params_tipo = []
+            params_nombre = []
+            for p in palabras:
+                where_tipo.append("p.nombre_normalizado LIKE ?")
+                params_tipo.append(f"{p.lower()}%")
+                where_nombre.append("p.nombre LIKE ?")
+                params_nombre.append(f"%{p}%")
 
-            # Prioridad 2: marca
-            marca_conds = ["LOWER(p.marca) LIKE ?" for _ in palabras]
-            params_marca = [f"%{p}%" for p in palabras]
-            marca_sql = " AND ".join(marca_conds)
-
-            # Prioridad 3: nombre completo (fallback)
-            nombre_conds = ["p.nombre LIKE ?" for _ in palabras]
-            params_nombre = [f"%{p}%" for p in palabras]
-            nombre_sql = " AND ".join(nombre_conds)
+            tipo_sql = " AND ".join(where_tipo)
+            nombre_sql = " AND ".join(where_nombre)
 
             super_filter = ""
             super_params = []
@@ -274,11 +274,13 @@ class DatabaseManager:
 
             sql = f"""
                 SELECT id, retailer_id, nombre, supermercado, categoria,
-                       formato, precio, tipo_producto, marca,
-                       nombre_normalizado, categoria_normalizada, prioridad
+                       formato, formato_normalizado, precio, tipo_producto,
+                       marca, nombre_normalizado, categoria_normalizada,
+                       prioridad
                 FROM (
                     SELECT p.id, p.id_externo AS retailer_id,
                            p.nombre, p.supermercado, p.categoria, p.formato,
+                           p.formato_normalizado,
                            (SELECT precio FROM precios WHERE producto_id=p.id
                             ORDER BY fecha_captura DESC LIMIT 1) AS precio,
                            p.tipo_producto, p.marca,
@@ -295,6 +297,7 @@ class DatabaseManager:
 
                     SELECT p.id, p.id_externo AS retailer_id,
                            p.nombre, p.supermercado, p.categoria, p.formato,
+                           p.formato_normalizado,
                            (SELECT precio FROM precios WHERE producto_id=p.id
                             ORDER BY fecha_captura DESC LIMIT 1) AS precio,
                            p.tipo_producto, p.marca,
@@ -305,42 +308,18 @@ class DatabaseManager:
                                ORDER BY p.nombre
                            ) AS rn
                     FROM productos p
-                    WHERE ({marca_sql}) {super_filter}
-                      AND p.id NOT IN (
-                          SELECT p2.id FROM productos p2
-                          WHERE ({tipo_sql.replace('p.', 'p2.')})
-                      )
-
-                    UNION ALL
-
-                    SELECT p.id, p.id_externo AS retailer_id,
-                           p.nombre, p.supermercado, p.categoria, p.formato,
-                           (SELECT precio FROM precios WHERE producto_id=p.id
-                            ORDER BY fecha_captura DESC LIMIT 1) AS precio,
-                           p.tipo_producto, p.marca,
-                           p.nombre_normalizado, p.categoria_normalizada,
-                           3 AS prioridad,
-                           ROW_NUMBER() OVER (
-                               PARTITION BY p.supermercado
-                               ORDER BY p.nombre
-                           ) AS rn
-                    FROM productos p
                     WHERE ({nombre_sql}) {super_filter}
                       AND p.id NOT IN (
                           SELECT p2.id FROM productos p2
                           WHERE ({tipo_sql.replace('p.', 'p2.')})
-                      )
-                      AND p.id NOT IN (
-                          SELECT p3.id FROM productos p3
-                          WHERE ({marca_sql.replace('p.', 'p3.')})
                       )
                 ) sub
                 WHERE sub.rn <= ?
                 ORDER BY sub.prioridad, sub.supermercado, sub.nombre
             """
             params = (params_tipo + super_params +
-                      params_marca + super_params + params_tipo +
-                      params_nombre + super_params + params_tipo + params_marca +
+                      params_nombre + super_params +
+                      params_tipo +
                       [limite_por_super])
 
             cur.execute(sql, params)
@@ -351,39 +330,32 @@ class DatabaseManager:
             logger.error("buscar_productos: %s", e)
             return pd.DataFrame()
 
-    # ── Búsqueda para comparador (3 prioridades) ────────────────────
+    # ── Búsqueda para comparador ──────────────────────────────────────
     def buscar_para_comparar(self, texto, limite_por_super=30):
-        """Búsqueda para comparador: tipo → marca → nombre."""
         cur = self._cursor()
         try:
-            palabras = texto.strip().lower().split()
+            palabras = texto.strip().split()
             if not palabras:
                 return pd.DataFrame()
 
-            # Prioridad 1: tipo
-            tipo_conds = ["p.nombre_normalizado LIKE ?"]
-            params_tipo = [f"{palabras[0]}%"]
-            for p in palabras[1:]:
-                tipo_conds.append("p.nombre_normalizado LIKE ?")
-                params_tipo.append(f"%{p}%")
-            tipo_sql = " AND ".join(tipo_conds)
+            where_tipo = " AND ".join(
+                ["p.nombre_normalizado LIKE ?" for _ in palabras]
+            )
+            params_tipo = [f"{p.lower()}%" for p in palabras]
 
-            # Prioridad 2: marca
-            marca_conds = ["LOWER(p.marca) LIKE ?" for _ in palabras]
-            params_marca = [f"%{p}%" for p in palabras]
-            marca_sql = " AND ".join(marca_conds)
-
-            # Prioridad 3: nombre
-            nombre_conds = ["p.nombre LIKE ?" for _ in palabras]
+            where_nombre = " AND ".join(
+                ["p.nombre LIKE ?" for _ in palabras]
+            )
             params_nombre = [f"%{p}%" for p in palabras]
-            nombre_sql = " AND ".join(nombre_conds)
 
             sql = f"""
-                SELECT id, nombre, supermercado, formato, precio,
+                SELECT id, nombre, supermercado, formato,
+                       formato_normalizado, precio,
                        precio_unidad, url, url_imagen,
                        tipo_producto, marca, categoria_normalizada, prioridad
                 FROM (
                     SELECT p.id, p.nombre, p.supermercado, p.formato,
+                           p.formato_normalizado,
                            pr.precio, pr.precio_por_unidad AS precio_unidad,
                            p.url, p.url_imagen,
                            p.tipo_producto, p.marca, p.categoria_normalizada,
@@ -397,11 +369,12 @@ class DatabaseManager:
                         SELECT id FROM precios WHERE producto_id=p.id
                         ORDER BY fecha_captura DESC LIMIT 1
                     )
-                    WHERE {tipo_sql}
+                    WHERE {where_tipo}
 
                     UNION ALL
 
                     SELECT p.id, p.nombre, p.supermercado, p.formato,
+                           p.formato_normalizado,
                            pr.precio, pr.precio_por_unidad AS precio_unidad,
                            p.url, p.url_imagen,
                            p.tipo_producto, p.marca, p.categoria_normalizada,
@@ -415,44 +388,15 @@ class DatabaseManager:
                         SELECT id FROM precios WHERE producto_id=p.id
                         ORDER BY fecha_captura DESC LIMIT 1
                     )
-                    WHERE {marca_sql}
+                    WHERE {where_nombre}
                       AND p.id NOT IN (
                           SELECT p2.id FROM productos p2
-                          WHERE {tipo_sql.replace('p.', 'p2.')}
-                      )
-
-                    UNION ALL
-
-                    SELECT p.id, p.nombre, p.supermercado, p.formato,
-                           pr.precio, pr.precio_por_unidad AS precio_unidad,
-                           p.url, p.url_imagen,
-                           p.tipo_producto, p.marca, p.categoria_normalizada,
-                           3 AS prioridad,
-                           ROW_NUMBER() OVER (
-                               PARTITION BY p.supermercado
-                               ORDER BY pr.precio ASC
-                           ) AS rn
-                    FROM productos p
-                    JOIN precios pr ON pr.id = (
-                        SELECT id FROM precios WHERE producto_id=p.id
-                        ORDER BY fecha_captura DESC LIMIT 1
-                    )
-                    WHERE {nombre_sql}
-                      AND p.id NOT IN (
-                          SELECT p2.id FROM productos p2
-                          WHERE {tipo_sql.replace('p.', 'p2.')}
-                      )
-                      AND p.id NOT IN (
-                          SELECT p3.id FROM productos p3
-                          WHERE {marca_sql.replace('p.', 'p3.')}
+                          WHERE {where_tipo.replace('p.', 'p2.')}
                       )
                 ) sub WHERE sub.rn <= ?
                 ORDER BY sub.prioridad, sub.supermercado, sub.precio
             """
-            params = (params_tipo +
-                      params_marca + params_tipo +
-                      params_nombre + params_tipo + params_marca +
-                      [limite_por_super])
+            params = params_tipo + params_nombre + params_tipo + [limite_por_super]
             cur.execute(sql, params)
             rows = cur.fetchall()
             return (pd.DataFrame(rows, columns=[d[0] for d in cur.description])
@@ -527,7 +471,8 @@ class DatabaseManager:
                 if not id_ext:
                     continue
                 cur.execute("""
-                    SELECT p.id, p.nombre, p.supermercado, p.formato, pr.precio
+                    SELECT p.id, p.nombre, p.supermercado, p.formato,
+                           p.formato_normalizado, pr.precio
                     FROM productos p
                     LEFT JOIN precios pr ON pr.id = (
                         SELECT id FROM precios WHERE producto_id=p.id
@@ -611,6 +556,7 @@ class DatabaseManager:
         try:
             cur.execute("""
                 SELECT p.id, p.nombre, p.supermercado, p.formato,
+                       p.formato_normalizado,
                        p.tipo_producto, p.marca, p.categoria_normalizada,
                        pr.precio, f.fecha_agregado
                 FROM favoritos f
