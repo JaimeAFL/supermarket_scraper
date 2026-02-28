@@ -3,7 +3,7 @@
 
 import sys, os
 
-_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 _DB_PATH = os.environ.get("SUPERMARKET_DB_PATH",
@@ -66,6 +66,7 @@ with tab1:
                     resumen[col] = resumen[col].apply(lambda x: f"{x:.2f} €")
                 st.dataframe(resumen, use_container_width=True, hide_index=True)
 
+                # Gráfico: producto más barato por supermercado
                 df_baratos = (df_principal.sort_values('precio')
                               .groupby('supermercado').first().reset_index())
                 st.plotly_chart(
@@ -98,8 +99,9 @@ with tab1:
                 (df_principal['precio'] <= rango[1])
             ].sort_values('precio')
 
+            # Usar formato_normalizado en la tabla
             cols = [c for c in ['nombre', 'supermercado', 'precio', 'marca',
-                                'categoria_normalizada', 'formato']
+                                'formato_normalizado', 'categoria_normalizada']
                     if c in df_filtrado.columns]
             st.dataframe(df_filtrado[cols],
                          use_container_width=True, hide_index=True)

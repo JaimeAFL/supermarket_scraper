@@ -1,9 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-matching/normalizer.py — Normalización de productos (Método 1+2).
-
-Método 1: Reglas de posición por supermercado para extraer tipo y marca.
-Método 2: Taxonomía de categorías a partir del tipo extraído.
+matching/normalizer.py — Normalización de productos (Método 1+2) + formato.
 
 Dependencia: matching/marcas.json (junto a este archivo)
 """
@@ -17,12 +14,20 @@ import unicodedata
 logger = logging.getLogger(__name__)
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# UTILIDADES
+# ═══════════════════════════════════════════════════════════════════════
+
 def _quitar_acentos(texto):
     nfkd = unicodedata.normalize('NFKD', texto)
     return "".join(c for c in nfkd if not unicodedata.combining(c))
 
 
-_MARCAS_PATH = os.path.join(os.path.dirname(__file__), "marcas.json")
+# ═══════════════════════════════════════════════════════════════════════
+# DICCIONARIO DE MARCAS
+# ═══════════════════════════════════════════════════════════════════════
+
+_MARCAS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "marcas.json")
 
 
 def _cargar_marcas():
@@ -36,6 +41,11 @@ def _cargar_marcas():
 
 
 _MARCAS_SORTED = _cargar_marcas()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# REGEX
+# ═══════════════════════════════════════════════════════════════════════
 
 _RE_FORMATO = re.compile(
     r'[,.]?\s*'
@@ -54,218 +64,233 @@ _RE_PRODUCTO_ALCAMPO = re.compile(
     re.IGNORECASE,
 )
 
-_EXCL_LECHE_COSMETICA = {
-    "corporal", "capilar", "limpiadora", "hidratante", "facial",
-    "desmaquillante", "protectora", "solar", "autobronceadora",
-    "reafirmante", "anticelulítica", "anticelul",
-}
-
-_EXCL_ACEITE_MOTOR = {
-    "motor", "sintético", "sintetico", "semi sintético",
-    "semi sintetico", "mineral para vehíc", "mineral para vehic",
-    "motocicleta", "scooter", "diésel", "diesel",
-    "gasolina", "multigrado", "4t ", "2t ",
-}
 
 # ═══════════════════════════════════════════════════════════════════════
-# TAXONOMÍA — ORDEN: específico antes de genérico
+# NORMALIZACIÓN DE FORMATO
+# ═══════════════════════════════════════════════════════════════════════
+
+# Regex para extraer pack: "6 x 1 l", "pack 4 x 125 g"
+_RE_FMT_PACK = re.compile(
+    r'(?:pack\s*(?:de\s*)?)?'
+    r'(\d+)\s*x\s*'
+    r'(\d+(?:\.\d+)?)\s*'
+    r'(ml|cl|dl|l|litros?|litro|g|gr|kg|mg)\b',
+    re.IGNORECASE,
+)
+
+# Regex para formato simple: "1000 ml", "1.5 l", "450 g"
+_RE_FMT_SIMPLE = re.compile(
+    r'(\d+(?:\.\d+)?)\s*'
+    r'(ml|cl|dl|l|litros?|litro|g|gr|kg|mg)\b',
+    re.IGNORECASE,
+)
+
+
+def normalizar_formato(formato_raw, nombre=""):
+    """Normaliza formato a unidades estándar: L (líquidos), kg (sólidos).
+
+    Convierte ml→L, cl→L, dl→L, g≥1000→kg.
+    Si formato_raw está vacío o es genérico ("KILO", "l"), extrae del nombre.
+
+    Returns:
+        str: "1 L", "0.33 L", "6 x 1 L", "450 g", "1.5 kg", "" si no hay dato
+    """
+    texto = (formato_raw or "").strip()
+
+    # Formato vacío o solo unidad → extraer del nombre
+    if not texto or texto.upper() in ("KILO", "LITRO", "L", "KG"):
+        texto = nombre or ""
+
+    if not texto:
+        return ""
+
+    # Normalizar coma decimal: "1,5" → "1.5"
+    texto_norm = re.sub(r'(\d),(\d)', r'\1.\2', texto)
+
+    # Intentar pack primero, luego simple
+    pack_match = _RE_FMT_PACK.search(texto_norm)
+    if pack_match:
+        pack_n = int(pack_match.group(1))
+        cantidad = float(pack_match.group(2))
+        unidad = pack_match.group(3).lower()
+    else:
+        simple_match = _RE_FMT_SIMPLE.search(texto_norm)
+        if not simple_match:
+            raw = (formato_raw or "").strip()
+            return raw if raw and raw.upper() not in ("KILO", "LITRO", "L", "KG") else ""
+        pack_n = None
+        cantidad = float(simple_match.group(1))
+        unidad = simple_match.group(2).lower()
+
+    # ── Convertir a L / kg ──
+    if unidad in ('ml',):
+        cantidad = round(cantidad / 1000, 4)
+        unidad_final = 'L'
+    elif unidad in ('cl',):
+        cantidad = round(cantidad / 100, 4)
+        unidad_final = 'L'
+    elif unidad in ('dl',):
+        cantidad = round(cantidad / 10, 4)
+        unidad_final = 'L'
+    elif unidad in ('l', 'litro', 'litros'):
+        unidad_final = 'L'
+    elif unidad in ('g', 'gr'):
+        if cantidad >= 1000:
+            cantidad = round(cantidad / 1000, 4)
+            unidad_final = 'kg'
+        else:
+            unidad_final = 'g'
+    elif unidad == 'mg':
+        unidad_final = 'mg'
+    elif unidad == 'kg':
+        unidad_final = 'kg'
+    else:
+        unidad_final = unidad
+
+    # Número limpio: 1.0 → "1", 0.330 → "0.33", 1.500 → "1.5"
+    if cantidad == int(cantidad):
+        num_str = str(int(cantidad))
+    else:
+        num_str = f"{cantidad:.4f}".rstrip('0').rstrip('.')
+
+    if pack_n:
+        return f"{pack_n} x {num_str} {unidad_final}"
+    else:
+        return f"{num_str} {unidad_final}"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# TAXONOMÍA (Método 2)
 # ═══════════════════════════════════════════════════════════════════════
 
 _TAXONOMIA_RAW = [
-    # ── Bebé (antes de Lácteos: "leche de inicio") ──
-    (["pañal", "papilla", "potito",
-      "leche de inicio", "leche de continuación", "leche de crecimiento",
-      "leche infantil", "leche (1)", "leche (2)", "leche (3)", "leche (4)"], "Bebé"),
-
-    # ── Lácteos ──
     (["leche entera", "leche semidesnatada", "leche desnatada",
       "leche sin lactosa", "leche fresca", "leche de vaca",
       "leche fermentada", "leche condensada", "leche evaporada",
-      "leche de cabra", "leche de oveja", "leche de pastoreo",
-      "leche con omega", "leche con calcio", "leche con zumo",
-      "leche en polvo"], "Lácteos"),
-    (["yogur", "yoghourt", "kefir", "kéfir", "skyr", "bífidus", "bifidus"], "Lácteos"),
-    (["queso ", "quesos", "queso,"], "Lácteos"),
+      "leche de cabra", "leche de oveja"], "Lácteos"),
+    (["yogur", "yoghourt", "kefir", "kéfir", "skyr"], "Lácteos"),
+    (["queso ", "quesos"], "Lácteos"),
     (["nata ", "nata para", "nata montada", "nata líquida"], "Lácteos"),
-    (["mantequilla", "margarina", "materia grasa para untar"], "Lácteos"),
-    (["natillas", "flan de", "flan casero", "cuajada", "requesón",
-      "arroz con leche", "crema catalana", "mousse de"], "Lácteos"),
-    (["batido de cacao", "batido de chocolate", "batido de fresa", "batido de vainilla"], "Lácteos"),
-
-    # ── Bebidas ──
-    (["agua mineral", "agua con gas", "agua de mar"], "Bebidas"),
-    (["refresco", "bebida de te", "bebida de té", "bebida isotónica",
-      "bebida energética", "tónica", "gaseosa", "zumo", "néctar",
-      "limonada", "smoothie", "horchata", "tinto de verano",
-      "granizado", "red bull"], "Bebidas"),
-    (["coca cola", "pepsi", "fanta", "aquarius", "sprite"], "Bebidas"),
-    (["bebida de soja", "bebida de avena", "bebida de almendra",
-      "bebida de arroz", "bebida de coco", "bebida vegetal",
-      "especialidad de soja", "bebida lactea"], "Bebidas vegetales"),
+    (["mantequilla", "margarina"], "Lácteos"),
+    (["natillas", "flan de", "flan casero", "cuajada", "requesón"], "Lácteos"),
+    (["agua mineral", "agua con gas"], "Bebidas"),
+    (["refresco", "bebida de", "bebida isotónica", "bebida energética",
+      "tónica", "gaseosa", "zumo", "néctar", "limonada", "smoothie",
+      "horchata"], "Bebidas"),
     (["cerveza"], "Cervezas"),
     (["vino ", "vino tinto", "vino blanco", "vino rosado", "cava",
       "champagne", "champán", "sidra", "sangría", "vermouth", "vermut",
-      "ginebra", "gin ", "vodka", "whisky", "ron ", "licor", "brandy", "orujo"], "Vinos y licores"),
+      "ginebra", "gin ", "vodka", "whisky", "ron ", "licor", "brandy",
+      "orujo"], "Vinos y licores"),
     (["café ", "café molido", "café en grano", "café soluble",
       "café en cápsulas", "cápsulas de café", "capsulas de cafe",
       "café con leche"], "Cafés e infusiones"),
-    (["infusión", "infusion", "té ", "te negro", "te verde",
-      "manzanilla", "tila", "poleo", "rooibos", "cacao soluble"], "Cafés e infusiones"),
-
-    # ── Panadería ──
+    (["infusión", "infusion", "té ", "manzanilla", "tila", "poleo",
+      "rooibos"], "Cafés e infusiones"),
     (["pan ", "pan de molde", "pan integral", "baguette", "panecillos",
       "tostadas", "pan tostado", "hogaza", "chapata", "focaccia",
-      "tortita de", "tortilla de trigo", "wrap", "barra de pan",
-      "panecillo", "pan bocata", "pan rallado", "picatostes"], "Panadería"),
+      "tortita", "tortilla de trigo", "wrap"], "Panadería"),
     (["galletas", "galleta"], "Galletas y bollería"),
     (["magdalena", "bizcocho", "bollo", "bollería", "donut",
-      "palmera de", "ensaimada", "berlina", "croissant", "rosquilla",
-      "soletilla", "sobaos", "brownie",
-      "barritas de cereales", "barrita de cereales", "barrita de chocolate"], "Galletas y bollería"),
-    (["arroz ", "cereal", "muesli", "avena ", "granola", "copos de"], "Cereales y legumbres"),
-    (["lentejas", "garbanzos", "garbanzo", "alubias", "judías secas"], "Cereales y legumbres"),
-    (["pasta ", "espagueti", "spaghetti", "macarron", "macarrones",
-      "fideos", "fideo", "tallarines", "lasaña", "canelones",
-      "ravioli", "tortellini", "noodles", "penne", "fusilli"], "Pasta"),
-    (["harina", "levadura", "sémola", "maicena"], "Harinas y preparados"),
-    (["atún ", "atun ", "sardinas", "sardina", "mejillones en",
-      "berberechos", "anchoas", "anchoa en", "caballa",
-      "bonito del norte", "bonito en"], "Conservas de pescado"),
+      "palmera", "ensaimada", "berlina", "croissant", "rosquilla",
+      "soletilla"], "Galletas y bollería"),
+    (["arroz ", "cereal", "muesli", "avena", "granola", "copos de"],
+     "Cereales y legumbres"),
+    (["lentejas", "garbanzos", "alubias", "judías secas", "frijoles"],
+     "Cereales y legumbres"),
+    (["pasta ", "espagueti", "macarron", "fideos", "tallarines",
+      "lasaña", "canelones", "ravioli", "tortellini", "noodles",
+      "spaghetti", "penne", "fusilli", "rigatoni"], "Pasta"),
+    (["harina", "levadura", "sémola", "maicena"], "Harinas"),
+    (["atún ", "atun ", "sardinas", "mejillones", "berberechos",
+      "anchoas", "caballa", "bonito del norte", "bonito en"],
+     "Conservas de pescado"),
     (["tomate frito", "tomate triturado", "tomate natural",
       "tomate pelado", "tomate concentrado"], "Conservas vegetales"),
-    (["pimientos del piquillo", "espárragos en", "alcachofa",
-      "aceitunas", "encurtidos", "pepinillos", "maíz dulce",
-      "guisantes en", "menestra de verduras", "alcaparras"], "Conservas vegetales"),
+    (["pimientos del piquillo", "espárragos", "alcachofa",
+      "aceitunas", "encurtidos", "pepinillos"], "Conservas vegetales"),
     (["aceite de oliva", "aceite de girasol", "aceite de coco",
-      "aceite de sésamo", "aceite vegetal", "aceite oliva"], "Aceites y vinagres"),
+      "aceite de sésamo", "aceite vegetal"], "Aceites y vinagres"),
     (["vinagre"], "Aceites y vinagres"),
     (["jamón", "jamon", "pechuga de pavo", "pechuga de pollo",
       "lomo embuchado", "lomo adobado", "chorizo", "salchichón",
       "salchichon", "salchicha", "mortadela", "fuet", "sobrasada",
       "bacon", "panceta", "fiambre", "butifarra", "morcilla",
-      "longaniza", "chistorra", "paleta de cebo", "paté de", "paté "], "Embutidos y fiambres"),
-    (["pollo ", "ternera", "cerdo ", "cordero", "vacuno", "pavo ",
+      "longaniza", "chistorra"], "Embutidos y fiambres"),
+    (["pollo ", "ternera", "cerdo", "cordero", "vacuno", "pavo ",
       "hamburguesa", "albóndiga", "carne picada", "carne de",
-      "filete de", "solomillo", "entrecot", "chuleta", "costilla",
-      "carrillera", "redondo de", "alas de pollo", "muslo de pollo",
-      "preparado de carne", "picada de vacuno"], "Carnes"),
+      "filete", "solomillo", "entrecot", "chuleta", "costilla",
+      "carrillera", "redondo de", "presa ibérica", "secreto ibérico"],
+     "Carnes"),
     (["merluza", "salmón", "salmon", "bacalao", "pescado", "gamba",
       "langostino", "rape", "lubina", "dorada", "trucha", "surimi",
-      "calamar", "pulpo", "sepia", "boquerón", "emperador",
-      "lenguado", "taquitos de mar", "palitos de surimi",
-      "lomos de merluza"], "Pescados y mariscos"),
-
-    # ═══ MÁS ESPECÍFICOS → ANTES DE GENÉRICOS ═══════════════════
-    # "patatas fritas" → Snacks  ANTES de  "patata" → Frutas
-    # "tortilla de patata" → Platos  ANTES de  "patata" → Frutas
-
-    (["pizza", "croqueta", "nuggets", "empanadilla", "san jacobo",
-      "varitas de merluza", "fingers de",
-      "tortilla de patata", "tortilla de patatas",
-      "caldo casero", "caldo natural", "sopa de", "crema de verduras",
-      "crema de calabacín", "crema de calabaza", "crema de espárrago",
-      "puré de", "gazpacho", "salmorejo", "codillo asado",
-      "guiso de", "fabada", "garbanzos con", "lentejas con",
-      "patatas fritas congeladas"], "Platos preparados"),
-
-    (["patatas fritas", "patatas chip", "patatas onduladas",
-      "patatas sabor", "patatas ligeras",
-      "snack", "palomitas", "nachos", "frutos secos",
-      "pipas ", "cacahuete", "almendras", "nueces ",
-      "pistachos", "mix de frutos", "cocktail de frutos",
-      "barritas crujientes"], "Snacks y frutos secos"),
-
-    (["helado de", "helado ", "tarrina de helado", "polo de",
-      "bombón helado", "bombón almendrado"], "Helados"),
-
-    # ── Frutas y verduras (DESPUÉS de Snacks/Platos) ──
+      "calamar", "pulpo", "sepia", "mejillón", "boquerón",
+      "emperador", "pez espada", "rodaballo", "lenguado"],
+     "Pescados y mariscos"),
     (["manzana", "plátano", "platano", "naranja", "limón", "limon",
-      "fresa ", "uva ", "melocotón", "pera ", "kiwi", "piña ",
-      "sandía", "melón", "melon", "cereza", "aguacate", "mango ",
-      "papaya", "frambuesa", "arándano", "bolsita de fruta"], "Frutas y verduras"),
+      "fresa", "uva", "melocotón", "pera ", "kiwi", "piña",
+      "sandía", "melón", "cereza", "aguacate", "mango ", "papaya"],
+     "Frutas y verduras"),
     (["tomate ", "tomate cherry", "patata", "cebolla", "ajo ",
-      "lechuga", "zanahoria", "pimiento", "calabacín",
+      "lechuga", "zanahoria", "pimiento", "calabacín", "calabacin",
       "pepino", "brócoli", "brocoli", "espinaca", "judía verde",
-      "champiñón", "seta ", "berenjena", "col ", "coliflor",
-      "remolacha", "apio", "rúcula", "canónigo", "ensalada"], "Frutas y verduras"),
-
+      "champiñón", "seta", "berenjena", "col ", "coliflor",
+      "remolacha", "apio", "rúcula", "canónigo", "endibias",
+      "ensalada"], "Frutas y verduras"),
+    (["pizza", "croqueta", "nuggets", "empanadilla", "san jacobo",
+      "varitas de merluza", "fingers"], "Congelados y preparados"),
     (["huevos"], "Huevos"),
-    (["salsa ", "mayonesa", "ketchup", "kétchup", "mostaza",
-      "sofrito", "caldo de", "pastillas de caldo"], "Salsas y condimentos"),
+    (["salsa ", "mayonesa", "ketchup", "mostaza", "sofrito",
+      "caldo de", "pastillas de caldo"], "Salsas y condimentos"),
     (["sal ", "sal marina", "pimienta", "especias", "orégano",
-      "pimentón", "comino", "canela ", "azafrán", "curry", "sazonador"], "Salsas y condimentos"),
-    (["azúcar", "azucar", "edulcorante", "sacarina"], "Azúcar y edulcorantes"),
-    (["chocolate", "bombón de", "cacao en polvo", "extrafino chocolate"], "Chocolates y cacao"),
+      "pimentón", "comino", "canela", "azafrán", "curry"],
+     "Salsas y condimentos"),
+    (["azúcar", "azucar", "edulcorante", "sacarina"],
+     "Azúcar y edulcorantes"),
+    (["chocolate", "bombón", "bombon", "cacao soluble", "cacao en polvo"],
+     "Chocolates y cacao"),
     (["mermelada", "miel ", "miel de", "crema de cacao",
-      "compota", "dulce de membrillo", "confitura"], "Dulces y untables"),
-
-    # ── Higiene personal ──
+      "compota", "dulce de membrillo", "confitura"],
+     "Dulces y untables"),
+    (["patatas fritas", "patatas chip", "snack", "palomitas",
+      "nachos", "frutos secos", "pipas", "cacahuete", "almendras",
+      "nueces", "pistachos"], "Snacks y frutos secos"),
     (["gel de ducha", "gel de baño", "champú", "champu", "acondicionador",
-      "jabón de manos", "jabón líquido", "desodorante",
-      "crema hidratante", "crema facial", "crema de manos",
+      "jabón", "jabon", "desodorante", "crema hidratante", "crema facial",
       "protector solar", "pasta de dientes", "dentífrico", "colutorio",
-      "enjuague bucal", "loción corporal", "sérum", "mascarilla capilar",
-      "after shave", "espuma de afeitar", "cuchillas de afeitar",
-      "maquinilla de afeitar", "maquinilla confort",
-      "colonia corporal", "perfume", "eau de toilette", "eau de parfum",
-      "contorno de ojos", "desmaquillante", "toallitas",
-      "compresa", "tampón", "protegeslip", "tinte ", "coloración",
-      "leche limpiadora", "leche corporal", "leche hidratante",
-      "leche facial", "leches hidratantes", "leche autobronceadora",
-      "perfilador de ojos", "sombra de ojos", "máscara de pestañas",
-      "laca de uñas", "pintalabios", "bálsamo labial", "protector labial",
-      "crema antiarrugas", "agua de colonia", "agua fresca de",
-      "cepillo de dientes", "hilo dental", "colorete", "base de maquillaje"], "Higiene personal"),
-
-    (["detergente", "suavizante", "lavavajillas ", "lejía", "lejia",
-      "limpiahogar", "limpiador ", "fregasuelos", "quitagrasa",
+      "enjuague bucal", "loción", "sérum", "mascarilla capilar",
+      "after shave", "espuma de afeitar", "cuchillas", "maquinilla",
+      "colonia", "perfume", "eau de toilette", "eau de parfum",
+      "crema de manos", "contorno de ojos", "desmaquillante",
+      "toallitas", "compresa", "tampón", "protegeslip",
+      "tinte ", "coloración"], "Higiene personal"),
+    (["detergente", "suavizante", "lavavajillas", "lejía", "lejia",
+      "limpiahogar", "limpiador", "fregasuelos", "quitagrasa",
       "desinfectante", "estropajo", "bayeta", "fregona", "escoba",
       "papel higiénico", "papel higienico", "papel de cocina",
-      "servilleta", "pañuelos de papel", "bolsas de basura",
-      "ambientador", "insecticida", "antipolillas", "quitamanchas",
-      "guantes de", "recambio mopa", "filtros de café",
-      "bolsas de congelación", "film transparente", "papel de aluminio",
-      "recambio de fregona", "mopa "], "Limpieza del hogar"),
-
+      "servilleta", "pañuelos", "panuelos", "bolsas de basura",
+      "ambientador", "insecticida", "antipolillas",
+      "guantes de", "recambio mopa"], "Limpieza del hogar"),
+    (["pañal", "panal", "papilla", "potito",
+      "leche de inicio", "leche de continuación", "leche de crecimiento",
+      "leche infantil"], "Bebé"),
     (["comida para perro", "comida para gato", "pienso",
       "alimento para perro", "alimento para gato",
-      "alimento de pollo", "alimento de salmón", "alimento de buey",
-      "alimento de cordero", "alimento de pato", "alimento de atún",
-      "alimento seco de", "alimento completo para",
-      "alimento húmedo", "comida húmeda para",
-      "snack para perro", "snack para gato", "snacks para perro",
-      "arena para gato", "comida perro", "comida gato",
-      "tartallete de pollo", "tartallete de"], "Mascotas"),
-
-    (["aceite sintético", "aceite semi sintético", "aceite mineral para",
-      "aceite motor", "aceite de motor",
-      "batería de coche", "anticongelante", "neumático"], "Automoción"),
-
-    (["bombilla", "plancha de vapor", "freidora de aire", "aspirador",
-      "secadora por", "lavadora", "microondas", "batidora", "tostador",
-      "cafetera", "robot de cocina", "smartphone", "tablet", "portátil",
-      "televisor", "auricular", "altavoz", "cargador", "cartucho de tinta",
-      "silla de paseo", "almohada de", "edredón", "sábana",
-      "vela de cumpleaños"], "Hogar y electrónica"),
+      "snacks para perro", "snacks para gato",
+      "arena para gato", "comida húmeda"], "Mascotas"),
 ]
 
 _TAXONOMIA = []
 for _prefijos, _cat in _TAXONOMIA_RAW:
-    _TAXONOMIA.append(([_quitar_acentos(p.lower()) for p in _prefijos], _cat))
+    _TAXONOMIA.append(
+        ([_quitar_acentos(p.lower()) for p in _prefijos], _cat)
+    )
 
 
 def _clasificar_tipo(tipo_producto):
     if not tipo_producto:
         return ""
     tipo_norm = _quitar_acentos(tipo_producto.lower().strip())
-    if tipo_norm.startswith("leche"):
-        for excl in _EXCL_LECHE_COSMETICA:
-            if _quitar_acentos(excl) in tipo_norm:
-                return "Higiene personal"
-    if tipo_norm.startswith("aceite"):
-        for excl in _EXCL_ACEITE_MOTOR:
-            if _quitar_acentos(excl) in tipo_norm:
-                return "Automoción"
     for prefijos, categoria in _TAXONOMIA:
         for prefijo in prefijos:
             if tipo_norm.startswith(prefijo):
@@ -277,17 +302,12 @@ def _clasificar_tipo(tipo_producto):
 # EXTRACCIÓN POR SUPERMERCADO (Método 1)
 # ═══════════════════════════════════════════════════════════════════════
 
-def _es_mayusculas(palabra):
-    cleaned = re.sub(r'[^a-záéíóúñüàèìòùçA-ZÁÉÍÓÚÑÜÀÈÌÒÙÇ]', '', palabra)
-    return len(cleaned) > 1 and cleaned == cleaned.upper()
-
-
 def _extraer_alcampo(nombre):
     palabras = nombre.split()
     i = 0
     while i < len(palabras):
-        p = palabras[i].strip('.,;:()')
-        if _es_mayusculas(p) and not p.isdigit():
+        c = palabras[i].strip('.,;:()[]"\'-')
+        if c == c.upper() and len(c) > 0 and not c.isdigit():
             i += 1
         else:
             break
@@ -304,8 +324,8 @@ def _extraer_eroski(nombre):
     palabras = texto.split()
     marca_start = len(palabras)
     for i in range(len(palabras) - 1, -1, -1):
-        p = palabras[i].strip('.,;:()')
-        if _es_mayusculas(p) and p.isalpha() and len(p) > 1:
+        c = palabras[i].strip('.,;:()[]"\'-')
+        if c == c.upper() and c.isalpha() and len(c) > 1:
             marca_start = i
         else:
             break
@@ -322,16 +342,13 @@ def _extraer_eroski(nombre):
 def _extraer_generico(nombre):
     nombre_upper = nombre.upper()
     for brand in _MARCAS_SORTED:
-        brand_upper = brand.upper()
+        brand_upper = brand if brand == brand.upper() else brand.upper()
         idx = nombre_upper.find(brand_upper)
         if idx == -1:
             continue
         if idx > 0 and nombre_upper[idx - 1].isalpha():
             continue
-        end_idx = idx + len(brand_upper)
-        if end_idx < len(nombre_upper) and nombre_upper[end_idx].isalpha():
-            continue
-        marca = nombre[idx:end_idx]
+        marca = nombre[idx:idx + len(brand_upper)]
         tipo_raw = nombre[:idx].strip().rstrip('.,;: ')
         tipo = _RE_FORMATO.sub('', tipo_raw).strip().rstrip('.,;: ')
         if tipo:
@@ -340,17 +357,23 @@ def _extraer_generico(nombre):
     return "", tipo
 
 
-def normalizar_producto(nombre, supermercado):
-    """Normaliza un nombre de producto.
+# ═══════════════════════════════════════════════════════════════════════
+# FUNCIÓN PRINCIPAL
+# ═══════════════════════════════════════════════════════════════════════
+
+def normalizar_producto(nombre, supermercado, formato_raw=""):
+    """Normaliza un nombre de producto y su formato.
 
     Returns:
-        dict: tipo_producto, marca, nombre_normalizado, categoria_normalizada
+        dict: tipo_producto, marca, nombre_normalizado,
+              categoria_normalizada, formato_normalizado
     """
     nombre = (nombre or "").strip()
     supermercado = (supermercado or "").strip()
     if not nombre:
         return {"tipo_producto": "", "marca": "",
-                "nombre_normalizado": "", "categoria_normalizada": ""}
+                "nombre_normalizado": "", "categoria_normalizada": "",
+                "formato_normalizado": ""}
 
     if supermercado == "Alcampo":
         marca, tipo = _extraer_alcampo(nombre)
@@ -361,10 +384,12 @@ def normalizar_producto(nombre, supermercado):
 
     nombre_norm = re.sub(r'\s+', ' ', tipo.lower().strip()).rstrip('.,;: ')
     categoria = _clasificar_tipo(tipo)
+    formato_norm = normalizar_formato(formato_raw, nombre)
 
     return {
         "tipo_producto": tipo,
         "marca": marca,
         "nombre_normalizado": nombre_norm,
         "categoria_normalizada": categoria,
+        "formato_normalizado": formato_norm,
     }

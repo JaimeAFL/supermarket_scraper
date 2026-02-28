@@ -17,10 +17,16 @@ Uso:
 
 import sys
 import logging
+import os
 from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Forzar PROJECT_ROOT basado en la ubicación de este script
+_PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -60,16 +66,16 @@ def main():
 
     logger.info("=" * 50)
     logger.info("Ejecutando scraper: %s", nombre.upper())
+    logger.info("Project root: %s", _PROJECT_ROOT)
     logger.info("=" * 50)
-
-    import os
 
     db = None
     if not skip_db:
         from database.init_db import inicializar_base_datos
         from database.database_db_manager import DatabaseManager
-        inicializar_base_datos()
-        db = DatabaseManager()
+        db_path = inicializar_base_datos()
+        logger.info("Base de datos: %s", db_path)
+        db = DatabaseManager(db_path)
 
     if nombre in NECESITA_COOKIE:
         logger.info("Configurando cookies...")
