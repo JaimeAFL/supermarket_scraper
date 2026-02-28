@@ -1,17 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Página del dashboard: Histórico de precios."""
+"""Página: Histórico de precios."""
 
-import sys
-import os
+import sys, os
 
 _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
-
-_DB_PATH = os.environ.get(
-    "SUPERMARKET_DB_PATH",
-    os.path.join(_PROJECT_ROOT, "database", "supermercados.db"),
-)
+_DB_PATH = os.environ.get("SUPERMARKET_DB_PATH",
+                          os.path.join(_PROJECT_ROOT, "database", "supermercados.db"))
 
 import streamlit as st
 import pandas as pd
@@ -27,129 +23,89 @@ st.markdown("Selecciona un producto para ver cómo ha evolucionado su precio.")
 inicializar_base_datos(_DB_PATH)
 db = DatabaseManager(_DB_PATH)
 
-# ── Info sobre días de datos ──────────────────────────────────────────────────
 stats = db.obtener_estadisticas()
 dias = stats.get('dias_con_datos', 0)
 if dias <= 1:
-    st.info(
-        "📊 Solo hay datos de **1 día**. El gráfico de evolución se "
-        "construirá automáticamente a medida que el scraper se ejecute "
-        "en distintos días."
-    )
+    st.info("📊 Solo hay datos de **1 día**. El gráfico aparecerá cuando "
+            "el scraper se ejecute en distintos días.")
 
-# ── Filtros ───────────────────────────────────────────────────────────────────
-col_filtro1, col_filtro2 = st.columns(2)
-
-with col_filtro1:
+col_f1, col_f2 = st.columns(2)
+with col_f1:
     df_todos = db.obtener_productos_con_precio_actual()
-    supers = (
-        ['Todos'] + sorted(df_todos['supermercado'].unique().tolist())
-        if not df_todos.empty else ['Todos']
-    )
-    supermercado_sel = st.selectbox("Supermercado:", supers)
+    supers = (['Todos'] + sorted(df_todos['supermercado'].unique().tolist())
+              if not df_todos.empty else ['Todos'])
+    super_sel = st.selectbox("Supermercado:", supers)
 
-with col_filtro2:
-    busqueda = st.text_input(
-        "Buscar producto:",
-        placeholder="Ej: leche entera, arroz, coca-cola...",
-    )
+with col_f2:
+    busqueda = st.text_input("Buscar producto:",
+                             placeholder="Ej: leche entera, arroz, café...")
 
-# ── Búsqueda y selección ─────────────────────────────────────────────────────
 if busqueda:
-    super_filtro = None if supermercado_sel == 'Todos' else supermercado_sel
-    df_resultados = db.buscar_productos(
-        nombre=busqueda, supermercado=super_filtro, limite=50,
-    )
+    super_filtro = None if super_sel == 'Todos' else super_sel
+    df_res = db.buscar_productos(nombre=busqueda, supermercado=super_filtro, limite=50)
 
-    if not df_resultados.empty:
-        opciones = {
-            f"{row['nombre']} ({row['supermercado']}) · {row.get('formato', '')}": row['id']
-            for _, row in df_resultados.iterrows()
-        }
+    if not df_res.empty:
+        # Mostrar info de tipo para que el usuario vea la diferencia
+        def _label(row):
+            cat = row.get('categoria_normalizada', '')
+            cat_tag = f" [{cat}]" if cat else ""
+            return f"{row['nombre']} ({row['supermercado']}){cat_tag}"
 
-        seleccion = st.selectbox(
-            f"Productos encontrados ({len(df_resultados)}):",
-            list(opciones.keys()),
-        )
+        opciones = {_label(row): row['id'] for _, row in df_res.iterrows()}
+        seleccion = st.selectbox(f"Productos encontrados ({len(df_res)}):",
+                                 list(opciones.keys()))
         producto_id = opciones[seleccion]
 
         st.markdown("---")
+        df_hist = db.obtener_historico_precios(producto_id)
 
-        df_historico = db.obtener_historico_precios(producto_id)
+        if not df_hist.empty:
+            nombre_prod = seleccion.split(" (")[0]
+            precio_actual = df_hist.iloc[-1]['precio']
 
-        if not df_historico.empty:
-            nombre_producto = seleccion.split(" (")[0]
-            precio_actual = df_historico.iloc[-1]['precio']
-
-            # Métricas
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                if len(df_historico) > 1:
-                    precio_anterior = df_historico.iloc[-2]['precio']
-                    variacion = precio_actual - precio_anterior
-                    st.metric(
-                        "Precio actual",
-                        f"{precio_actual:.2f} €",
-                        f"{variacion:+.2f} €",
-                    )
+                if len(df_hist) > 1:
+                    var = precio_actual - df_hist.iloc[-2]['precio']
+                    st.metric("Precio actual", f"{precio_actual:.2f} €",
+                              f"{var:+.2f} €")
                 else:
                     st.metric("Precio actual", f"{precio_actual:.2f} €")
             with col2:
-                st.metric(
-                    "Precio mínimo", f"{df_historico['precio'].min():.2f} €"
-                )
+                st.metric("Mínimo", f"{df_hist['precio'].min():.2f} €")
             with col3:
-                st.metric(
-                    "Precio máximo", f"{df_historico['precio'].max():.2f} €"
-                )
+                st.metric("Máximo", f"{df_hist['precio'].max():.2f} €")
             with col4:
-                st.metric("Registros", len(df_historico))
+                st.metric("Registros", len(df_hist))
 
-            # Gráfico
-            if len(df_historico) > 1:
-                st.plotly_chart(
-                    grafico_historico_precio(df_historico, nombre_producto),
-                    use_container_width=True,
-                )
+            if len(df_hist) > 1:
+                st.plotly_chart(grafico_historico_precio(df_hist, nombre_prod),
+                                use_container_width=True)
             else:
-                st.markdown(
-                    f"**Precio registrado:** €{precio_actual:.2f}"
-                )
+                st.markdown(f"**Precio registrado:** €{precio_actual:.2f}")
                 try:
-                    fecha = datetime.fromisoformat(
-                        df_historico.iloc[0]['fecha_captura']
-                    )
+                    fecha = datetime.fromisoformat(df_hist.iloc[0]['fecha_captura'])
                     st.caption(f"Capturado el {fecha.strftime('%d/%m/%Y a las %H:%M')}")
                 except Exception:
-                    st.caption(
-                        f"Fecha: {df_historico.iloc[0]['fecha_captura']}"
-                    )
-                st.info(
-                    "Solo hay 1 punto de datos. El gráfico aparecerá "
-                    "cuando haya capturas de más de un día."
-                )
+                    pass
+                st.info("Solo hay 1 punto de datos. El gráfico aparecerá "
+                        "cuando haya capturas de más de un día.")
 
-            # Tabla de datos
             with st.expander("Ver datos en tabla"):
-                df_mostrar = df_historico.copy()
-                df_mostrar['precio'] = df_mostrar['precio'].apply(
-                    lambda x: f"{x:.2f} €"
-                )
+                df_m = df_hist.copy()
+                df_m['precio'] = df_m['precio'].apply(lambda x: f"{x:.2f} €")
                 try:
-                    df_mostrar['fecha_captura'] = pd.to_datetime(
-                        df_mostrar['fecha_captura']
-                    ).dt.strftime('%d/%m/%Y %H:%M')
+                    df_m['fecha_captura'] = pd.to_datetime(
+                        df_m['fecha_captura']).dt.strftime('%d/%m/%Y %H:%M')
                 except Exception:
                     pass
                 st.dataframe(
-                    df_mostrar[['fecha_captura', 'precio']].rename(
-                        columns={'fecha_captura': 'Fecha', 'precio': 'Precio'}
-                    ),
-                    use_container_width=True, hide_index=True,
-                )
+                    df_m[['fecha_captura', 'precio']].rename(
+                        columns={'fecha_captura': 'Fecha', 'precio': 'Precio'}),
+                    use_container_width=True, hide_index=True)
         else:
-            st.info("Este producto aún no tiene registros de precio.")
+            st.info("Este producto no tiene registros de precio.")
     else:
         st.warning(f"No se encontraron productos con '{busqueda}'.")
 else:
-    st.info("Escribe el nombre de un producto para empezar a buscar.")
+    st.info("Escribe el nombre de un producto para empezar.")
