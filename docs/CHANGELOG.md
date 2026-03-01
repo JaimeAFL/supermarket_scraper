@@ -2,6 +2,20 @@
 
 Registro de todos los cambios realizados en Supermarket Price Tracker.
 
+## v2.0.1 — Actualización de documentación (2026-03-01)
+
+### Cambiado
+
+- README actualizado con nombre de carpeta/repositorio actual (`supermarket_scraper`) y enlaces a documentación técnica.
+- Documentación alineada con el estado real del código:
+  - taxonomía de **28 categorías** (no 26),
+  - referencia correcta a `database/database_db_manager.py`,
+  - aclaraciones de cookies y ejecución en CI/CD.
+- `docs/api_supermercados.md` reescrito para reflejar la estrategia actual de extracción por supermercado.
+- `docs/guia_env.md` simplificada y sincronizada con `example.env` y los flujos de `main.py` / `run_scraper.py`.
+
+---
+
 ## v2.0.0 — Motor de normalización NLP (2026-02-28)
 
 Reescritura mayor del sistema de búsqueda y clasificación de productos.
@@ -15,7 +29,7 @@ categoría a partir del nombre, resolviendo el problema de que buscar
   - Método 1 (reglas de posición): cada supermercado tiene un patrón de
     naming distinto (Alcampo: MARCA + tipo, Eroski: tipo + MARCA + formato,
     Mercadona/Carrefour/Dia: tipo + marca por diccionario).
-  - Método 2 (taxonomía): clasifica el tipo extraído en 26 categorías
+  - Método 2 (taxonomía): clasifica el tipo extraído en 28 categorías
     normalizadas (Lácteos, Cafés e infusiones, Chocolates y cacao, etc.).
 - **`matching/marcas.json`** — Diccionario de 1.480 marcas auto-extraídas
   de los datos de Alcampo y Eroski (donde la marca va en MAYÚSCULAS),
