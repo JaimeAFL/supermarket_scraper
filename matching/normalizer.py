@@ -494,9 +494,14 @@ def calcular_precio_unitario(precio, formato_normalizado):
     fmt = formato_normalizado.strip()
     m = _RE_PARSE_FMT.match(fmt)
     if not m:
-        # Formatos standalone: "L", "kg", "m", "lavados"
-        if fmt in ("L", "kg", "ud", "m", "lavados"):
-            return None, ""
+        # Formatos standalone: "L", "kg" → el precio YA es por unidad
+        # (Mercadona da precios por litro/kilo directamente)
+        if fmt == "L":
+            return round(precio, 2), "€/L"
+        if fmt == "kg":
+            return round(precio, 2), "€/kg"
+        if fmt == "m":
+            return round(precio, 2), "€/m"
         return None, ""
 
     pack = int(m.group(1)) if m.group(1) else 1
