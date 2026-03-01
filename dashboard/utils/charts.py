@@ -291,7 +291,7 @@ def grafico_distribucion_precios_zoom(df, supermercado=""):
         x=media, line_dash="dot", line_color="#607D8B",
         line_width=1.8,
         annotation_text=f"Media: {media:.2f} EUR",
-        annotation_position="bottom",
+        annotation_position="top left",
         annotation_font=dict(size=11, color="#546E7A"),
         annotation_bgcolor="rgba(255,255,255,0.85)",
         annotation_bordercolor="#CFD8DC",
@@ -314,7 +314,7 @@ def grafico_distribucion_precios_zoom(df, supermercado=""):
             f"<span style='color:{color}; font-weight:700'>{en_rango:,}</span>"
             " de "
             f"<span style='color:{color}; font-weight:700'>{total:,}</span>"
-            " productos (<= p95)"
+            " productos"
         ),
         xref="paper", yref="paper", x=0.98, y=0.95,
         showarrow=False,
@@ -367,7 +367,7 @@ def grafico_distribucion_precios_completa(df, supermercado=""):
         x=media, line_dash="dot", line_color="#607D8B",
         line_width=1.8,
         annotation_text=f"Media: {media:.2f} EUR",
-        annotation_position="bottom",
+        annotation_position="top left",
         annotation_font=dict(size=11, color="#546E7A"),
         annotation_bgcolor="rgba(255,255,255,0.85)",
         annotation_bordercolor="#CFD8DC",
