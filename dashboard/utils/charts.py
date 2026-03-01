@@ -320,8 +320,9 @@ def grafico_distribucion_precios_zoom(df, supermercado=""):
         showarrow=False,
         font=dict(size=12, color="#5A6C7D", family="Inter"),
         xanchor="right",
-        bordercolor="rgba(0,0,0,0)", borderwidth=0,
-        bgcolor="rgba(0,0,0,0)",
+        bordercolor="#CFD8DC", borderwidth=1,
+        borderpad=4,
+        bgcolor="rgba(255,255,255,0.88)",
     )
     return fig
 
