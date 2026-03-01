@@ -15,7 +15,7 @@ from database.database_db_manager import DatabaseManager
 from database.init_db import inicializar_base_datos
 
 st.set_page_config(page_title="Favoritos", page_icon="⭐", layout="wide")
-st.title("⭐ Mis Favoritos")
+st.title("Mis Favoritos")
 
 inicializar_base_datos(_DB_PATH)
 db = DatabaseManager(_DB_PATH)
@@ -47,7 +47,7 @@ else:
 
 # ── Añadir favorito ──────────────────────────────────────────────────
 st.markdown("---")
-st.subheader("➕ Añadir producto a favoritos")
+st.subheader("Añadir producto a favoritos")
 st.caption("La búsqueda prioriza el tipo de producto.")
 
 col_b, col_s = st.columns([3, 1])
