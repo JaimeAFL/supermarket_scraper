@@ -148,8 +148,8 @@ def grafico_comparador_precios(df, titulo="Comparativa de precios",
                       xaxis_title=f"Precio ({unidad_eje})",
                       xaxis_tickprefix="€",
                       template='plotly_white',
-                      height=max(250, len(df) * 45 + 100),
-                      margin=dict(r=180), yaxis=dict(automargin=True))
+                      height=max(250, len(df) * 55 + 100),
+                      margin=dict(r=280), yaxis=dict(automargin=True))
     return fig
 
 
@@ -162,7 +162,8 @@ def grafico_productos_por_supermercado(stats):
     colores = [COLORES_SUPERMERCADO.get(s, '#95A5A6') for s in supers]
     fig = go.Figure(go.Bar(
         y=supers, x=cantidades, orientation='h',
-        marker_color=colores, text=cantidades, textposition='auto'))
+        marker_color=colores, text=cantidades,
+        textposition='inside', textfont=dict(color='white', size=14)))
     fig.update_layout(title="Productos por supermercado",
                       xaxis_title="Número de productos",
                       template='plotly_white', height=300)
@@ -200,9 +201,13 @@ def grafico_distribucion_precios_zoom(df, supermercado=""):
         yaxis_title="Número de productos",
         template='plotly_white', height=400,
         annotations=[dict(
-            text=f"{en_rango:,} de {total:,} productos mostrados",
+            text=f"<b>{en_rango:,}</b> de <b>{total:,}</b> productos mostrados",
             xref="paper", yref="paper", x=0.98, y=0.95,
-            showarrow=False, font=dict(size=11, color="gray"), xanchor="right")])
+            showarrow=False,
+            font=dict(size=12, color=color),
+            xanchor="right",
+            bordercolor="rgba(0,0,0,0)", borderwidth=0,
+            bgcolor="rgba(0,0,0,0)")])
     return fig
 
 
