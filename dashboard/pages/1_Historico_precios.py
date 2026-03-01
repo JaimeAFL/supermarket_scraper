@@ -16,8 +16,8 @@ from database.database_db_manager import DatabaseManager
 from database.init_db import inicializar_base_datos
 from dashboard.utils.charts import grafico_historico_precio
 
-st.set_page_config(page_title="Histórico de precios", page_icon="📈", layout="wide")
-st.title("📈 Histórico de precios")
+st.set_page_config(page_title="Histórico de precios", layout="wide")
+st.title("Histórico de precios")
 st.markdown("Selecciona un producto para ver cómo ha evolucionado su precio.")
 
 inicializar_base_datos(_DB_PATH)
@@ -26,7 +26,7 @@ db = DatabaseManager(_DB_PATH)
 stats = db.obtener_estadisticas()
 dias = stats.get('dias_con_datos', 0)
 if dias <= 1:
-    st.info("📊 Solo hay datos de **1 día**. El gráfico aparecerá cuando "
+    st.info("Solo hay datos de **1 día**. El gráfico aparecerá cuando "
             "el scraper se ejecute en distintos días.")
 
 col_f1, col_f2 = st.columns(2)
