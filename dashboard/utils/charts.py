@@ -201,10 +201,13 @@ def grafico_distribucion_precios_zoom(df, supermercado=""):
         yaxis_title="Número de productos",
         template='plotly_white', height=400,
         annotations=[dict(
-            text=f"<b>{en_rango:,}</b> de <b>{total:,}</b> productos mostrados",
+            text=f"<span style='color:{color}'><b>{en_rango:,}</b></span>"
+                 f" de "
+                 f"<span style='color:{color}'><b>{total:,}</b></span>"
+                 f" productos mostrados",
             xref="paper", yref="paper", x=0.98, y=0.95,
             showarrow=False,
-            font=dict(size=12, color=color),
+            font=dict(size=12, color="gray"),
             xanchor="right",
             bordercolor="rgba(0,0,0,0)", borderwidth=0,
             bgcolor="rgba(0,0,0,0)")])
