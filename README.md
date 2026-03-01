@@ -32,7 +32,7 @@ Comparador y rastreador de precios de supermercados en España. Extrae datos de 
 
 - **Búsqueda inteligente:** buscar "leche" devuelve solo lácteos, no "café con leche" ni "chocolate con leche". El motor extrae el tipo de producto y prioriza resultados por relevancia semántica.
 - **Normalización cross-retailer:** cada producto se descompone en tipo, marca y formato independientemente de cómo lo nombre cada supermercado.
-- **26 categorías normalizadas:** desde "Lácteos" hasta "Mascotas", asignadas automáticamente a partir del nombre del producto.
+- **28 categorías normalizadas:** desde "Lácteos" hasta "Mascotas", asignadas automáticamente a partir del nombre del producto.
 - **Comparador de precios:** tabla resumen con el más barato por supermercado y diferencias porcentuales.
 - **Histórico de precios:** gráfico temporal por producto con evolución semanal.
 - **Ejecución paralela:** cada scraper corre en un job independiente de GitHub Actions; si uno falla, los demás se guardan igualmente.
@@ -40,7 +40,7 @@ Comparador y rastreador de precios de supermercados en España. Extrae datos de 
 ## Estructura del proyecto
 
 ```
-supermarket-price-tracker/
+supermarket_scraper/
 ├── .github/workflows/
 │   └── scraper_semanal.yml       # CI/CD: 5 scrapers en paralelo + merge
 ├── scraper/
@@ -84,8 +84,8 @@ supermarket-price-tracker/
 
 1. Clona el repositorio:
 ```bash
-git clone https://github.com/tu-usuario/supermarket-price-tracker.git
-cd supermarket-price-tracker
+git clone https://github.com/tu-usuario/supermarket_scraper.git
+cd supermarket_scraper
 ```
 
 2. Crea y activa un entorno virtual:
@@ -133,16 +133,10 @@ streamlit run dashboard/app.py
 
 ## Configuración de cookies
 
-Mercadona, Alcampo y Eroski no necesitan cookies. Para Carrefour:
+Mercadona, Alcampo y Eroski no necesitan cookies manuales.
 
-1. Abre la web del supermercado en el navegador.
-2. Pulsa F12 para abrir las herramientas de desarrollador.
-3. Ve a la pestaña Red (Network).
-4. Recarga la página (F5).
-5. Haz clic en cualquier petición y busca "Cookie" en los encabezados de solicitud.
-6. Copia el valor completo y pégalo en tu archivo `.env`.
-
-Dia obtiene su cookie automáticamente mediante Playwright.
+- **Dia**: requiere `COOKIE_DIA`, que se intenta obtener automáticamente con Playwright desde `cookie_manager.py`.
+- **Carrefour**: el scraper actual funciona con Playwright e interceptación de respuestas; `COOKIE_CARREFOUR` se mantiene como fallback para flujos legacy/verificación.
 
 ### Codespaces / GitHub Actions
 
@@ -159,7 +153,7 @@ Cada scraper llama a la API interna del supermercado, obtiene el árbol de categ
 Antes de guardar en la base de datos, cada producto pasa por el motor de normalización (`matching/normalizer.py`) que extrae:
 - **Tipo de producto:** lo que el producto ES ("Leche entera", "Café molido")
 - **Marca:** detectada por reglas de posición según el supermercado + diccionario de 1.480 marcas
-- **Categoría normalizada:** clasificación automática en 26 categorías canónicas
+- **Categoría normalizada:** clasificación automática en 28 categorías canónicas
 
 ### 3. Almacenamiento
 Los datos se guardan en SQLite con upsert: si el producto ya existe se actualizan sus datos, y siempre se inserta un nuevo registro de precio con fecha. Esto construye el histórico automáticamente.
@@ -186,6 +180,15 @@ Cada job exporta un CSV. El job final descarga todos los CSVs, los importa en la
 
 Se ejecuta automáticamente cada lunes a las 7:00 AM (hora española). También se puede lanzar manualmente desde la pestaña Actions del repositorio.
 
+## Documentación adicional
+
+- `docs/arquitectura.md`: arquitectura técnica y flujo de datos.
+- `docs/api_supermercados.md`: estrategia de extracción por supermercado.
+- `docs/normalizacion.md`: motor de normalización (tipo, marca, formato, categoría).
+- `docs/ci_cd.md`: pipeline semanal en GitHub Actions.
+- `docs/guia_env.md`: configuración de variables de entorno.
+- `docs/CHANGELOG.md`: historial de cambios.
+
 ## Roadmap
 
 - [x] Scraper de Mercadona
@@ -199,7 +202,7 @@ Se ejecuta automáticamente cada lunes a las 7:00 AM (hora española). También 
 - [x] Base de datos SQLite con histórico
 - [x] Motor de normalización NLP (tipo + marca + categoría)
 - [x] Diccionario de marcas auto-extraído (1.480 marcas)
-- [x] 26 categorías normalizadas
+- [x] 28 categorías normalizadas
 - [x] Búsqueda inteligente por tipo de producto
 - [x] Sistema de equivalencias entre productos
 - [x] Dashboard con Streamlit
