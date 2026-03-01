@@ -21,8 +21,7 @@ from dashboard.utils.charts import (
 from dashboard.utils.styles import inyectar_estilos
 from dashboard.utils.components import (
     encabezado, fila_metricas, sidebar_branding,
-    barra_filtros, paginar_dataframe, reset_paginacion,
-    estado_vacio,
+    barra_filtros, estado_vacio,
 )
 
 st.set_page_config(page_title="Supermarket Price Tracker", page_icon="",
@@ -48,7 +47,7 @@ if not os.path.exists(_DB_PATH):
 st.title("Supermarket Price Tracker")
 st.markdown("Comparador de precios de supermercados espanoles con historico semanal.")
 
-# ── Métricas en cards ─────────────────────────────────────────────────
+# ── Metricas en cards ─────────────────────────────────────────────────
 stats = db.obtener_estadisticas()
 cats = stats.get('productos_por_categoria', {})
 dias = stats.get('dias_con_datos', 0)
@@ -71,7 +70,7 @@ st.markdown("---")
 st.plotly_chart(grafico_productos_por_supermercado(stats),
                 use_container_width=True)
 
-# ── Distribución de precios ──────────────────────────────────────────
+# ── Distribucion de precios ──────────────────────────────────────────
 st.markdown("---")
 encabezado("Distribucion de precios", "bar_chart", nivel=3)
 
@@ -92,7 +91,7 @@ if supers_disponibles:
         st.plotly_chart(grafico_distribucion_precios_completa(df_super, super_sel),
                         use_container_width=True)
 
-# ── Resumen por supermercado ──────────────────────────────────────────
+# ── Resumen por supermercado (sin Mediana) ────────────────────────────
 st.markdown("---")
 encabezado("Resumen por supermercado", "table_chart", nivel=3)
 
@@ -102,9 +101,9 @@ if stats.get('productos_por_supermercado'):
         df_s = db.obtener_productos_con_precio_actual(supermercado=supermercado)
         if not df_s.empty:
             datos_tabla.append({
-                'Supermercado': supermercado, 'Productos': total,
+                'Supermercado': supermercado,
+                'Productos': total,
                 'Precio medio': f"{df_s['precio'].mean():.2f} EUR",
-                'Mediana': f"{df_s['precio'].median():.2f} EUR",
                 'Minimo': f"{df_s['precio'].min():.2f} EUR",
                 'Maximo': f"{df_s['precio'].max():.2f} EUR",
             })
@@ -112,7 +111,7 @@ if stats.get('productos_por_supermercado'):
         st.dataframe(pd.DataFrame(datos_tabla),
                      use_container_width=True, hide_index=True)
 
-# ── Búsqueda rápida ──────────────────────────────────────────────────
+# ── Busqueda rapida (sin paginacion) ─────────────────────────────────
 st.markdown("---")
 encabezado("Busqueda rapida de productos", "search", nivel=3)
 
@@ -131,7 +130,7 @@ if filtros['busqueda']:
         )
 
     if not df_res.empty:
-        # Filtro de categoría
+        # Filtro de categoria
         if filtros['categoria'] and 'categoria_normalizada' in df_res.columns:
             df_res = df_res[df_res['categoria_normalizada'] == filtros['categoria']]
 
@@ -149,10 +148,8 @@ if filtros['busqueda']:
 
             if not df_tipo.empty:
                 st.caption(f"{len(df_tipo)} resultados directos")
-
-                # Paginación en resultados directos
-                df_pagina = paginar_dataframe(df_tipo, "pag_home_tipo", filas_por_pagina=20)
-                st.dataframe(df_pagina[cols_mostrar],
+                # Render directo sin paginacion
+                st.dataframe(df_tipo[cols_mostrar],
                              use_container_width=True, hide_index=True)
 
             if not df_nombre.empty:
@@ -160,10 +157,7 @@ if filtros['busqueda']:
                     f"Otros {len(df_nombre)} productos que mencionan "
                     f"'{filtros['busqueda']}'"
                 ):
-                    df_pag_otros = paginar_dataframe(
-                        df_nombre, "pag_home_otros", filas_por_pagina=20
-                    )
-                    st.dataframe(df_pag_otros[cols_mostrar],
+                    st.dataframe(df_nombre[cols_mostrar],
                                  use_container_width=True, hide_index=True)
         else:
             estado_vacio(

@@ -18,7 +18,7 @@ from database.init_db import inicializar_base_datos
 from dashboard.utils.styles import inyectar_estilos, COLORES_SUPERMERCADO
 from dashboard.utils.components import (
     encabezado, fila_insights, fila_metricas,
-    estado_vacio, barra_filtros, paginar_dataframe,
+    estado_vacio, barra_filtros,
     badge_html, tarjeta_producto_html,
 )
 
@@ -35,17 +35,18 @@ db = DatabaseManager(_DB_PATH)
 # FUNCIONES AUXILIARES
 # ═══════════════════════════════════════════════════════════════════════
 
-def _enriquecer_favoritos(db, df_favs):
-    """Anade indicadores de decision a cada favorito.
+def _construir_opciones_favoritos(df_favs):
+    """Construye diccionario label->id para selectboxes de favoritos."""
+    if df_favs.empty:
+        return {}
+    return {
+        f"{row['nombre']} ({row['supermercado']})": row['id']
+        for _, row in df_favs.iterrows()
+    }
 
-    Para cada producto:
-    - precio_actual: ultimo precio
-    - precio_min: minimo historico
-    - precio_max: maximo historico
-    - variacion: cambio vs registro anterior
-    - en_minimo: True si el precio actual == minimo historico
-    - estado: 'minimo'|'subio'|'bajo'|'estable'
-    """
+
+def _enriquecer_favoritos(db, df_favs):
+    """Anade indicadores de decision a cada favorito."""
     datos_enriquecidos = []
     for _, row in df_favs.iterrows():
         prod_id = row.get('id') or row.get('producto_id')
@@ -63,7 +64,6 @@ def _enriquecer_favoritos(db, df_favs):
             'fecha_agregado': row.get('fecha_agregado', ''),
         }
 
-        # Obtener histórico
         df_hist = db.obtener_historico_precios(prod_id)
         if not df_hist.empty:
             precio_actual = df_hist.iloc[-1]['precio']
@@ -73,8 +73,7 @@ def _enriquecer_favoritos(db, df_favs):
             info['precio_actual'] = precio_actual
             info['precio_min'] = precio_min
             info['precio_max'] = precio_max
-            info['en_minimo'] = (
-                abs(precio_actual - precio_min) < 0.005)
+            info['en_minimo'] = abs(precio_actual - precio_min) < 0.005
 
             if len(df_hist) > 1:
                 precio_anterior = df_hist.iloc[-2]['precio']
@@ -105,7 +104,6 @@ def _enriquecer_favoritos(db, df_favs):
 
 
 def _icono_estado(estado):
-    """Devuelve (icono, tipo) segun estado."""
     mapa = {
         'minimo':  ('arrow_downward', 'success'),
         'bajo':    ('trending_down', 'success'),
@@ -116,7 +114,6 @@ def _icono_estado(estado):
 
 
 def _texto_estado(estado):
-    """Devuelve texto legible del estado."""
     mapa = {
         'minimo':  'Minimo historico',
         'bajo':    'Bajo de precio',
@@ -126,18 +123,91 @@ def _texto_estado(estado):
     return mapa.get(estado, 'Sin datos')
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# LISTA DE FAVORITOS
-# ═══════════════════════════════════════════════════════════════════════
+# ── Cargar favoritos actuales (se usa en varios bloques) ──────────────
 df_favs = db.obtener_favoritos()
+ids_fav_actuales = set(df_favs['id'].tolist()) if not df_favs.empty else set()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 1) ANADIR PRODUCTO A FAVORITOS  (arriba del todo)
+# ═══════════════════════════════════════════════════════════════════════
+encabezado("Anadir producto a favoritos", "add_circle_outline", nivel=3)
+
+filtros_add = barra_filtros(
+    db, clave_vista="fav_add",
+    mostrar_busqueda=True, mostrar_super=True,
+    mostrar_categoria=False, mostrar_precio=False, mostrar_orden=False
+)
+
+if filtros_add['busqueda']:
+    with st.spinner("Buscando..."):
+        df_res = db.buscar_productos(
+            nombre=filtros_add['busqueda'],
+            supermercado=filtros_add['supermercado'],
+            limite=30)
+
+    if not df_res.empty:
+        df_res = df_res[~df_res['id'].isin(ids_fav_actuales)]
+
+        if df_res.empty:
+            st.info("Todos los resultados ya estan en favoritos.")
+        else:
+            opciones_add = {
+                (f"{row['nombre']} ({row['supermercado']}) - "
+                 f"{row.get('precio', '?')} EUR"): row['id']
+                for _, row in df_res.iterrows()
+            }
+            fav_agregar = st.selectbox(
+                f"Productos encontrados ({len(df_res)}):",
+                list(opciones_add.keys()), key="fav_agregar")
+
+            if st.button("Anadir a favoritos", key="fav_btn_add"):
+                db.agregar_favorito(opciones_add[fav_agregar])
+                st.success("Anadido a favoritos.")
+                st.rerun()
+    else:
+        estado_vacio(
+            "search_off",
+            f"No se encontraron productos con '{filtros_add['busqueda']}'",
+            "Prueba con otro termino."
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 2) ELIMINAR FAVORITO  (justo debajo de anadir)
+# ═══════════════════════════════════════════════════════════════════════
+st.markdown("---")
+encabezado("Eliminar un favorito", "remove_circle_outline", nivel=3)
 
 if not df_favs.empty:
-    # Enriquecer con indicadores
+    opciones_elim = _construir_opciones_favoritos(df_favs)
+    fav_eliminar = st.selectbox(
+        "Selecciona el favorito a eliminar:",
+        list(opciones_elim.keys()), key="fav_eliminar")
+
+    confirmar = st.checkbox(
+        "Confirmo que quiero eliminar este favorito",
+        key="fav_confirmar_elim")
+    if st.button("Eliminar", key="fav_btn_elim", disabled=not confirmar):
+        db.eliminar_favorito(opciones_elim[fav_eliminar])
+        st.success("Eliminado.")
+        st.rerun()
+else:
+    st.caption("No hay favoritos para eliminar.")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 3) LISTA DE FAVORITOS CON INDICADORES  (parte inferior)
+# ═══════════════════════════════════════════════════════════════════════
+st.markdown("---")
+encabezado("Tus favoritos", "list", nivel=3)
+
+if not df_favs.empty:
     with st.spinner("Analizando favoritos..."):
         df_enriquecido = _enriquecer_favoritos(db, df_favs)
 
     if not df_enriquecido.empty:
-        # ── Métricas resumen ──────────────────────────────────────
+        # ── Metricas resumen ──────────────────────────────────────
         total = len(df_enriquecido)
         en_minimo = (df_enriquecido['estado'] == 'minimo').sum()
         bajaron = (df_enriquecido['estado'] == 'bajo').sum()
@@ -160,8 +230,7 @@ if not df_favs.empty:
                 icono, tipo = _icono_estado(row['estado'])
                 badges = [(_texto_estado(row['estado']), tipo)]
                 if row['variacion'] != 0:
-                    badges.append(
-                        (f"{row['variacion']:+.2f} EUR", tipo))
+                    badges.append((f"{row['variacion']:+.2f} EUR", tipo))
                 st.markdown(
                     tarjeta_producto_html(
                         nombre=row['nombre'],
@@ -173,11 +242,8 @@ if not df_favs.empty:
                     unsafe_allow_html=True)
             st.markdown("---")
 
-        # ── Tabla completa de favoritos ───────────────────────────
-        encabezado("Todos los favoritos", "list", nivel=3)
-
-        # Selector de orden
-        col_orden, col_espacio = st.columns([1, 3])
+        # ── Todos los favoritos ───────────────────────────────────
+        col_orden, _ = st.columns([1, 3])
         with col_orden:
             orden_fav = st.selectbox(
                 "Ordenar por:",
@@ -185,35 +251,24 @@ if not df_favs.empty:
                  "Precio menor", "Precio mayor", "Nombre A-Z"],
                 key="fav_orden")
 
-        # Aplicar orden
         if orden_fav == "Estado (oportunidades primero)":
-            orden_estados = {
-                'minimo': 0, 'bajo': 1, 'estable': 2, 'subio': 3
-            }
-            df_enriquecido['_orden'] = (
-                df_enriquecido['estado'].map(orden_estados))
-            df_ordenado = df_enriquecido.sort_values(
-                ['_orden', 'precio_actual'])
+            orden_estados = {'minimo': 0, 'bajo': 1, 'estable': 2, 'subio': 3}
+            df_enriquecido['_orden'] = df_enriquecido['estado'].map(orden_estados)
+            df_ordenado = df_enriquecido.sort_values(['_orden', 'precio_actual'])
         elif orden_fav == "Precio menor":
             df_ordenado = df_enriquecido.sort_values('precio_actual')
         elif orden_fav == "Precio mayor":
-            df_ordenado = df_enriquecido.sort_values(
-                'precio_actual', ascending=False)
+            df_ordenado = df_enriquecido.sort_values('precio_actual', ascending=False)
         else:
             df_ordenado = df_enriquecido.sort_values('nombre')
 
-        # Renderizar como tarjetas con paginación
-        df_pagina = paginar_dataframe(
-            df_ordenado, "pag_favs", filas_por_pagina=10)
-
-        for _, row in df_pagina.iterrows():
+        for _, row in df_ordenado.iterrows():
             icono, tipo = _icono_estado(row['estado'])
             badges = [(_texto_estado(row['estado']), tipo)]
             if row['variacion'] != 0:
                 badges.append((f"{row['variacion']:+.2f} EUR", tipo))
             if row.get('marca'):
                 badges.append((row['marca'], 'neutral'))
-
             st.markdown(
                 tarjeta_producto_html(
                     nombre=row['nombre'],
@@ -223,29 +278,6 @@ if not df_favs.empty:
                     badges_extra=badges,
                 ),
                 unsafe_allow_html=True)
-
-        # ── Eliminar favorito ─────────────────────────────────────
-        st.markdown("---")
-        with st.expander("Eliminar un favorito"):
-            opciones_elim = {
-                f"{row['nombre']} ({row['supermercado']})": row['id']
-                for _, row in df_enriquecido.iterrows()
-            }
-            fav_eliminar = st.selectbox(
-                "Selecciona el favorito a eliminar:",
-                list(opciones_elim.keys()), key="fav_eliminar")
-
-            # Doble confirmación
-            confirmar = st.checkbox(
-                "Confirmo que quiero eliminar este favorito",
-                key="fav_confirmar_elim")
-            if st.button(
-                "Eliminar", key="fav_btn_elim",
-                disabled=not confirmar
-            ):
-                db.eliminar_favorito(opciones_elim[fav_eliminar])
-                st.success("Eliminado.")
-                st.rerun()
     else:
         estado_vacio(
             "bookmark_border",
@@ -256,56 +288,5 @@ else:
     estado_vacio(
         "bookmark_border",
         "No tienes productos en favoritos",
-        "Busca un producto abajo y anadelo a tu lista."
+        "Usa el buscador de arriba para anadir productos."
     )
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# AÑADIR FAVORITO
-# ═══════════════════════════════════════════════════════════════════════
-st.markdown("---")
-encabezado("Anadir producto a favoritos", "add_circle_outline", nivel=3)
-
-filtros_add = barra_filtros(
-    db, clave_vista="fav_add",
-    mostrar_busqueda=True, mostrar_super=True,
-    mostrar_categoria=False, mostrar_precio=False, mostrar_orden=False
-)
-
-if filtros_add['busqueda']:
-    with st.spinner("Buscando..."):
-        df_res = db.buscar_productos(
-            nombre=filtros_add['busqueda'],
-            supermercado=filtros_add['supermercado'],
-            limite=30)
-
-    if not df_res.empty:
-        ids_fav = (set(df_favs['id'].tolist())
-                   if not df_favs.empty else set())
-        df_res = df_res[~df_res['id'].isin(ids_fav)]
-
-        if df_res.empty:
-            st.info("Todos los resultados ya estan en favoritos.")
-        else:
-            opciones_add = {
-                (f"{row['nombre']} ({row['supermercado']}) - "
-                 f"{row.get('precio', '?')} EUR"): row['id']
-                for _, row in df_res.iterrows()
-            }
-            fav_agregar = st.selectbox(
-                f"Productos encontrados ({len(df_res)}):",
-                list(opciones_add.keys()), key="fav_agregar")
-
-            if st.button(
-                "Anadir a favoritos", key="fav_btn_add"
-            ):
-                db.agregar_favorito(opciones_add[fav_agregar])
-                st.success("Anadido a favoritos.")
-                st.rerun()
-    else:
-        estado_vacio(
-            "search_off",
-            (f"No se encontraron productos con "
-             f"'{filtros_add['busqueda']}'"),
-            "Prueba con otro termino."
-        )
