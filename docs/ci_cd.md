@@ -152,9 +152,9 @@ Settings → Secrets and variables → Actions:
 
 | Secret | Usado por | Descripción |
 |---|---|---|
-| `CODIGO_POSTAL` | Dia, Alcampo | Código postal para geolocalización de precios |
+| `CODIGO_POSTAL` | Dia, Alcampo, Carrefour, Eroski | Código postal/contexto de tienda donde aplica |
 | `COOKIE_DIA` | Dia | Cookie de sesión (fallback si la obtención automática falla) |
-| `COOKIE_CARREFOUR` | Carrefour | Cookie de sesión (necesaria, no se puede obtener automáticamente) |
+| `COOKIE_CARREFOUR` | Carrefour | Cookie opcional de fallback/compatibilidad |
 
 ## Artifacts
 
@@ -211,7 +211,7 @@ on:
 ```
 
 `workflow_dispatch` permite ejecutar el pipeline manualmente desde
-Actions → Scraper Diario → Run workflow. Útil para testing y para
+Actions → Scraper Semanal de Supermercados → Run workflow. Útil para testing y para
 recuperar datos tras un fallo.
 
 ## Estructura del workflow
