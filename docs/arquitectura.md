@@ -19,10 +19,10 @@ Supermarket Price Tracker.
 ├──────────────────────────────────────────────────────────────────────┤
 │                    matching/normalizer.py                              │
 │                    Método 1: reglas de posición por supermercado       │
-│                    Método 2: taxonomía de 26 categorías                │
+│                    Método 2: taxonomía de 28 categorías                │
 │                    Diccionario: 1.480 marcas (marcas.json)             │
 ├──────────────────────────────────────────────────────────────────────┤
-│                    database/db_manager.py                              │
+│                    database/database_db_manager.py                              │
 │                    SQLite + búsqueda inteligente por tipo_producto     │
 ├──────────────────────────────────────────────────────────────────────┤
 │                    matching/product_matcher.py                         │
@@ -108,7 +108,7 @@ Mercadona, Carrefour y Dia.
 
 #### Método 2: Taxonomía de categorías
 
-Una vez extraído el tipo de producto, se clasifica en 26 categorías
+Una vez extraído el tipo de producto, se clasifica en 28 categorías
 normalizadas mediante coincidencia de prefijos:
 
 | Tipo extraído | Categoría |
@@ -119,7 +119,7 @@ normalizadas mediante coincidencia de prefijos:
 | Cerveza rubia | Cervezas |
 | Gel de ducha | Higiene personal |
 
-Las 26 categorías cubren: Lácteos, Bebidas, Cervezas, Vinos y licores,
+Las 28 categorías cubren: Lácteos, Bebidas, Cervezas, Vinos y licores,
 Cafés e infusiones, Panadería, Galletas y bollería, Cereales y legumbres,
 Pasta, Harinas, Conservas de pescado, Conservas vegetales, Aceites y vinagres,
 Embutidos y fiambres, Carnes, Pescados y mariscos, Frutas y verduras,
@@ -147,7 +147,7 @@ normalizar_producto("Leche entera Hacendado", "Mercadona")
 
 ### 3. Almacenamiento (Base de datos)
 
-`database/db_manager.py` recibe el DataFrame ya normalizado y hace:
+`database/database_db_manager.py` recibe el DataFrame ya normalizado y hace:
 
 - **Upsert en `productos`:** Si el producto no existe (por `id_externo` +
   `supermercado`), lo crea con sus campos normalizados. Si ya existe,
@@ -342,7 +342,7 @@ streamlit run dashboard/app.py
 ## Estructura de carpetas
 
 ```
-supermarket-price-tracker/
+supermarket_scraper/
 ├── .github/workflows/       # CI/CD: scrapers paralelos + merge
 ├── .devcontainer/           # Config para GitHub Codespaces
 ├── scraper/                 # Scrapers de cada supermercado

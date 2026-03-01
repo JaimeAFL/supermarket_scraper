@@ -3,7 +3,7 @@
 ## Archivos generados
 
 ```
-supermarket-price-tracker/
+supermarket_scraper/
 ├── .streamlit/
 │   └── config.toml                      ← NUEVO: tema Streamlit base
 ├── dashboard/
