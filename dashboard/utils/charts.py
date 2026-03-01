@@ -244,7 +244,7 @@ def grafico_productos_por_supermercado(stats):
 
 
 def grafico_distribucion_precios_zoom(df, supermercado=""):
-    """Distribucion de precios (percentil 95) con lineas de referencia."""
+    """Distribucion de precios (percentil 95) con diseno limpio sin duplicados."""
     if df.empty or 'precio' not in df.columns:
         return _grafico_vacio("No hay datos de precios")
     color = COLORES_SUPERMERCADO.get(supermercado, '#3498DB')
@@ -253,8 +253,6 @@ def grafico_distribucion_precios_zoom(df, supermercado=""):
         return _grafico_vacio("No hay datos de precios")
 
     p95 = float(np.percentile(precios, 95))
-    p25 = float(np.percentile(precios, 25))
-    p75 = float(np.percentile(precios, 75))
     mediana = float(np.median(precios))
     media = float(np.mean(precios))
     precios_zoom = precios[precios <= p95]
@@ -263,9 +261,9 @@ def grafico_distribucion_precios_zoom(df, supermercado=""):
 
     fig = go.Figure()
 
-    # Histograma principal
+    # Histograma principal (una sola traza para evitar elementos duplicados)
     fig.add_trace(go.Histogram(
-        x=precios_zoom, nbinsx=50,
+        x=precios_zoom, nbinsx=min(45, max(20, int(np.sqrt(en_rango) * 2))),
         marker_color=color, opacity=0.55,
         marker_line_color='rgba(255,255,255,0.4)',
         marker_line_width=0.8,
@@ -275,12 +273,12 @@ def grafico_distribucion_precios_zoom(df, supermercado=""):
             "<extra></extra>"),
     ))
 
-    # Linea de mediana (principal)
+    # Lineas guia unicas
     fig.add_vline(
         x=mediana, line_dash="dash", line_color="#1A1A1A",
         line_width=2,
         annotation_text=f"Mediana: {mediana:.2f} EUR",
-        annotation_position="top right",
+        annotation_position="top",
         annotation_font=dict(size=12, color="#1A1A1A",
                              family="Inter"),
         annotation_bgcolor="rgba(255,255,255,0.9)",
@@ -289,24 +287,15 @@ def grafico_distribucion_precios_zoom(df, supermercado=""):
         annotation_borderpad=4,
     )
 
-    # Lineas de cuartiles Q1 y Q3 (sutiles)
     fig.add_vline(
-        x=p25, line_dash="dot", line_color="#B0BEC5",
-        line_width=1.5,
-        annotation_text=f"Q1: {p25:.2f}",
-        annotation_position="bottom right",
-        annotation_font=dict(size=10, color="#78909C"),
-        annotation_bgcolor="rgba(0,0,0,0)",
-        annotation_borderwidth=0,
-    )
-    fig.add_vline(
-        x=p75, line_dash="dot", line_color="#B0BEC5",
-        line_width=1.5,
-        annotation_text=f"Q3: {p75:.2f}",
-        annotation_position="bottom right",
-        annotation_font=dict(size=10, color="#78909C"),
-        annotation_bgcolor="rgba(0,0,0,0)",
-        annotation_borderwidth=0,
+        x=media, line_dash="dot", line_color="#607D8B",
+        line_width=1.8,
+        annotation_text=f"Media: {media:.2f} EUR",
+        annotation_position="bottom",
+        annotation_font=dict(size=11, color="#546E7A"),
+        annotation_bgcolor="rgba(255,255,255,0.85)",
+        annotation_bordercolor="#CFD8DC",
+        annotation_borderwidth=1,
     )
 
     fig.update_layout(
@@ -317,31 +306,22 @@ def grafico_distribucion_precios_zoom(df, supermercado=""):
         yaxis_title="Numero de productos",
         height=420,
         bargap=0.05,
-        annotations=[
-            # Contador de productos (esquina superior derecha)
-            dict(
-                text=(f"<b>{en_rango:,}</b> de <b>{total:,}</b>"
-                      f" productos"),
-                xref="paper", yref="paper", x=0.98, y=0.95,
-                showarrow=False,
-                font=dict(size=12, color="#5A6C7D",
-                          family="Inter"),
-                xanchor="right",
-                bordercolor="rgba(0,0,0,0)", borderwidth=0,
-                bgcolor="rgba(0,0,0,0)",
-            ),
-            # Media
-            dict(
-                text=f"Media: {media:.2f} EUR",
-                xref="paper", yref="paper", x=0.98, y=0.88,
-                showarrow=False,
-                font=dict(size=11, color="#78909C",
-                          family="Inter"),
-                xanchor="right",
-                bordercolor="rgba(0,0,0,0)", borderwidth=0,
-                bgcolor="rgba(0,0,0,0)",
-            ),
-        ],
+    )
+
+    # Contador de productos en una unica etiqueta (evita duplicados)
+    fig.add_annotation(
+        text=(
+            f"<span style='color:{color}; font-weight:700'>{en_rango:,}</span>"
+            " de "
+            f"<span style='color:{color}; font-weight:700'>{total:,}</span>"
+            " productos (<= p95)"
+        ),
+        xref="paper", yref="paper", x=0.98, y=0.95,
+        showarrow=False,
+        font=dict(size=12, color="#5A6C7D", family="Inter"),
+        xanchor="right",
+        bordercolor="rgba(0,0,0,0)", borderwidth=0,
+        bgcolor="rgba(0,0,0,0)",
     )
     return fig
 
@@ -356,10 +336,11 @@ def grafico_distribucion_precios_completa(df, supermercado=""):
         return _grafico_vacio("No hay datos de precios")
 
     mediana = float(np.median(precios))
+    media = float(np.mean(precios))
 
     fig = go.Figure()
     fig.add_trace(go.Histogram(
-        x=precios, nbinsx=80,
+        x=precios, nbinsx=min(70, max(30, int(np.sqrt(len(precios)) * 2))),
         marker_color=color, opacity=0.55,
         marker_line_color='rgba(255,255,255,0.4)',
         marker_line_width=0.8,
@@ -373,13 +354,24 @@ def grafico_distribucion_precios_completa(df, supermercado=""):
         x=mediana, line_dash="dash", line_color="#1A1A1A",
         line_width=2,
         annotation_text=f"Mediana: {mediana:.2f} EUR",
-        annotation_position="top right",
+        annotation_position="top",
         annotation_font=dict(size=12, color="#1A1A1A",
                              family="Inter"),
         annotation_bgcolor="rgba(255,255,255,0.9)",
         annotation_bordercolor="#C4CDD5",
         annotation_borderwidth=1,
         annotation_borderpad=4,
+    )
+
+    fig.add_vline(
+        x=media, line_dash="dot", line_color="#607D8B",
+        line_width=1.8,
+        annotation_text=f"Media: {media:.2f} EUR",
+        annotation_position="bottom",
+        annotation_font=dict(size=11, color="#546E7A"),
+        annotation_bgcolor="rgba(255,255,255,0.85)",
+        annotation_bordercolor="#CFD8DC",
+        annotation_borderwidth=1,
     )
 
     fig.update_layout(
