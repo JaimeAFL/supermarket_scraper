@@ -16,8 +16,33 @@ from database.database_db_manager import DatabaseManager
 from database.init_db import inicializar_base_datos
 from dashboard.utils.charts import grafico_historico_precio
 
-st.set_page_config(page_title="Histórico de precios", layout="wide")
-st.title("Histórico de precios")
+st.set_page_config(page_title="Histórico de precios", page_icon="", layout="wide")
+
+st.markdown("""
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined"
+      rel="stylesheet">
+<style>
+    .icon-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 4px;
+    }
+    .icon-header .material-icons-outlined {
+        font-size: 28px;
+        color: #5A6C7D;
+    }
+    .icon-header h2, .icon-header h3 {
+        margin: 0;
+        padding: 0;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown(
+    '<div class="icon-header">'
+    '<span class="material-icons-outlined">trending_up</span>'
+    '<h2>Histórico de precios</h2></div>', unsafe_allow_html=True)
 st.markdown("Selecciona un producto para ver cómo ha evolucionado su precio.")
 
 inicializar_base_datos(_DB_PATH)
@@ -45,7 +70,6 @@ if busqueda:
     df_res = db.buscar_productos(nombre=busqueda, supermercado=super_filtro, limite=50)
 
     if not df_res.empty:
-        # Mostrar info de tipo para que el usuario vea la diferencia
         def _label(row):
             cat = row.get('categoria_normalizada', '')
             cat_tag = f" [{cat}]" if cat else ""
@@ -82,7 +106,7 @@ if busqueda:
                 st.plotly_chart(grafico_historico_precio(df_hist, nombre_prod),
                                 use_container_width=True)
             else:
-                st.markdown(f"**Precio registrado:** €{precio_actual:.2f}")
+                st.markdown(f"**Precio registrado:** {precio_actual:.2f} €")
                 try:
                     fecha = datetime.fromisoformat(df_hist.iloc[0]['fecha_captura'])
                     st.caption(f"Capturado el {fecha.strftime('%d/%m/%Y a las %H:%M')}")

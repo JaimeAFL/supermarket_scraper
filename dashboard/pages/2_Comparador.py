@@ -17,7 +17,42 @@ from dashboard.utils.charts import grafico_comparador_precios
 from matching.normalizer import calcular_precio_unitario
 
 st.set_page_config(page_title="Comparador", page_icon="", layout="wide")
-st.title("Comparador de precios")
+
+# ── Material Icons + CSS ──────────────────────────────────────────────
+st.markdown("""
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined"
+      rel="stylesheet">
+<style>
+    .icon-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 4px;
+    }
+    .icon-header .material-icons-outlined {
+        font-size: 28px;
+        color: #5A6C7D;
+    }
+    .icon-header h2, .icon-header h3 {
+        margin: 0;
+        padding: 0;
+    }
+    .tab-icon {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .tab-icon .material-icons-outlined {
+        font-size: 18px;
+        vertical-align: middle;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown(
+    '<div class="icon-header">'
+    '<span class="material-icons-outlined">balance</span>'
+    '<h2>Comparador de precios</h2></div>', unsafe_allow_html=True)
 
 inicializar_base_datos(_DB_PATH)
 db = DatabaseManager(_DB_PATH)
@@ -44,6 +79,7 @@ tab1, tab2 = st.tabs(["Comparar precios", "Equivalencias guardadas"])
 with tab1:
     st.markdown("Busca un producto y compara precios **unitarios** (€/L, €/kg) "
                 "entre supermercados.")
+
     busqueda = st.text_input("Buscar producto:",
                              placeholder="Ej: leche entera, café, aceite oliva...",
                              key="comp_busqueda")
@@ -54,7 +90,6 @@ with tab1:
         if df.empty:
             st.warning(f"No se encontraron productos con '{busqueda}'.")
         else:
-            # Calcular precio unitario
             df = _añadir_precio_unitario(df)
 
             if 'prioridad' in df.columns:
@@ -67,12 +102,15 @@ with tab1:
             df_principal = df_tipo if not df_tipo.empty else df
             supers_disp = sorted(df_principal['supermercado'].unique().tolist())
 
-            st.subheader(f"Resultados para «{busqueda}»")
+            st.markdown(
+                f'<div class="icon-header">'
+                f'<span class="material-icons-outlined">query_stats</span>'
+                f'<h3>Resultados para «{busqueda}»</h3></div>',
+                unsafe_allow_html=True)
             st.caption(f"{len(df_tipo)} resultados directos"
                        + (f", {len(df_otros)} menciones secundarias"
                           if not df_otros.empty else ""))
 
-            # ── Resumen con precio unitario ──
             if not df_principal.empty:
                 df_con_pu = df_principal[df_principal['precio_unitario'].notna()]
                 if not df_con_pu.empty:
@@ -81,7 +119,6 @@ with tab1:
                     unidad_comun = ""
 
                 if not df_con_pu.empty and unidad_comun:
-                    # Resumen por precio unitario
                     df_misma_unidad = df_con_pu[df_con_pu['unidad_precio'] == unidad_comun]
                     if not df_misma_unidad.empty:
                         resumen = df_misma_unidad.groupby('supermercado')['precio_unitario'].agg(
@@ -99,7 +136,6 @@ with tab1:
                             resumen[col] = resumen[col].apply(lambda x: f"{x:.2f} €")
                         st.dataframe(resumen, use_container_width=True, hide_index=True)
 
-                    # Gráfico: precio unitario más bajo por supermercado
                     df_baratos = (df_misma_unidad.sort_values('precio_unitario')
                                   .groupby('supermercado').first().reset_index())
                     st.plotly_chart(
@@ -109,7 +145,6 @@ with tab1:
                             usar_precio_unitario=True),
                         use_container_width=True)
                 else:
-                    # Sin precio unitario → fallback a precio absoluto
                     st.caption("No hay datos de formato suficientes para "
                                "comparar por precio unitario. Mostrando precio absoluto.")
                     resumen = df_principal.groupby('supermercado')['precio'].agg(
@@ -133,7 +168,11 @@ with tab1:
                         use_container_width=True)
 
             st.markdown("---")
-            st.subheader("Todos los productos encontrados")
+            st.markdown(
+                '<div class="icon-header">'
+                '<span class="material-icons-outlined">format_list_bulleted</span>'
+                '<h3>Todos los productos encontrados</h3></div>',
+                unsafe_allow_html=True)
 
             col_f1, col_f2 = st.columns(2)
             with col_f1:
@@ -156,14 +195,12 @@ with tab1:
                 (df_principal['precio'] <= rango[1])
             ]
 
-            # Ordenar por precio unitario si disponible, sino por precio
             if df_filtrado['precio_unitario'].notna().any():
                 df_filtrado = df_filtrado.sort_values(
                     'precio_unitario', na_position='last')
             else:
                 df_filtrado = df_filtrado.sort_values('precio')
 
-            # Tabla con precio unitario
             cols = ['nombre', 'supermercado', 'precio',
                     'formato_normalizado', 'precio_unitario', 'unidad_precio',
                     'marca', 'categoria_normalizada']

@@ -14,8 +14,33 @@ import pandas as pd
 from database.database_db_manager import DatabaseManager
 from database.init_db import inicializar_base_datos
 
-st.set_page_config(page_title="Favoritos", page_icon="⭐", layout="wide")
-st.title("Mis Favoritos")
+st.set_page_config(page_title="Favoritos", page_icon="", layout="wide")
+
+st.markdown("""
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined"
+      rel="stylesheet">
+<style>
+    .icon-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 4px;
+    }
+    .icon-header .material-icons-outlined {
+        font-size: 28px;
+        color: #5A6C7D;
+    }
+    .icon-header h2, .icon-header h3 {
+        margin: 0;
+        padding: 0;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown(
+    '<div class="icon-header">'
+    '<span class="material-icons-outlined">bookmark</span>'
+    '<h2>Mis Favoritos</h2></div>', unsafe_allow_html=True)
 
 inicializar_base_datos(_DB_PATH)
 db = DatabaseManager(_DB_PATH)
@@ -27,7 +52,8 @@ if not df_favs.empty:
     st.subheader(f"Tienes {len(df_favs)} producto(s) en favoritos")
 
     cols = [c for c in ['nombre', 'supermercado', 'precio', 'marca',
-                        'categoria_normalizada', 'formato', 'fecha_agregado']
+                        'categoria_normalizada', 'formato_normalizado',
+                        'fecha_agregado']
             if c in df_favs.columns]
     st.dataframe(df_favs[cols], use_container_width=True, hide_index=True)
 
@@ -38,7 +64,7 @@ if not df_favs.empty:
     }
     fav_eliminar = st.selectbox("Eliminar favorito:", list(opciones_elim.keys()),
                                 key="fav_eliminar")
-    if st.button("🗑️ Eliminar", key="fav_btn_elim"):
+    if st.button("Eliminar", key="fav_btn_elim"):
         db.eliminar_favorito(opciones_elim[fav_eliminar])
         st.success("Eliminado.")
         st.rerun()
@@ -47,8 +73,10 @@ else:
 
 # ── Añadir favorito ──────────────────────────────────────────────────
 st.markdown("---")
-st.subheader("Añadir producto a favoritos")
-st.caption("La búsqueda prioriza el tipo de producto.")
+st.markdown(
+    '<div class="icon-header">'
+    '<span class="material-icons-outlined">add_circle_outline</span>'
+    '<h3>Añadir producto a favoritos</h3></div>', unsafe_allow_html=True)
 
 col_b, col_s = st.columns([3, 1])
 with col_b:
@@ -67,7 +95,6 @@ if busqueda_fav:
                                  limite=30)
 
     if not df_res.empty:
-        # Excluir los que ya son favoritos
         ids_fav = set(df_favs['id'].tolist()) if not df_favs.empty else set()
         df_res = df_res[~df_res['id'].isin(ids_fav)]
 
@@ -83,7 +110,7 @@ if busqueda_fav:
                 f"Productos encontrados ({len(df_res)}):",
                 list(opciones_add.keys()), key="fav_agregar")
 
-            if st.button("⭐ Añadir a favoritos", key="fav_btn_add"):
+            if st.button("Añadir a favoritos", key="fav_btn_add"):
                 db.agregar_favorito(opciones_add[fav_agregar])
                 st.success("Añadido a favoritos.")
                 st.rerun()
