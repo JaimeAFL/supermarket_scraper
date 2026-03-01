@@ -15,12 +15,10 @@ import streamlit as st
 import pandas as pd
 from database.database_db_manager import DatabaseManager
 from database.init_db import inicializar_base_datos
-from dashboard.utils.charts import grafico_comparador_precios
 from matching.normalizer import calcular_precio_unitario
 from dashboard.utils.styles import inyectar_estilos
 from dashboard.utils.components import (
     encabezado, fila_insights, estado_vacio,
-    paginar_dataframe, badge_html,
 )
 
 st.set_page_config(page_title="Comparador", page_icon="", layout="wide")
@@ -32,7 +30,7 @@ inicializar_base_datos(_DB_PATH)
 db = DatabaseManager(_DB_PATH)
 
 
-def _añadir_precio_unitario(df):
+def _anadir_precio_unitario(df):
     """Anade columnas precio_unitario y unidad_precio al DataFrame."""
     precios_u = []
     unidades = []
@@ -46,6 +44,14 @@ def _añadir_precio_unitario(df):
     df['precio_unitario'] = precios_u
     df['unidad_precio'] = unidades
     return df
+
+
+def _ids_favoritos_actuales():
+    """Devuelve set de IDs de productos ya en favoritos."""
+    df_favs = db.obtener_favoritos()
+    if not df_favs.empty and 'id' in df_favs.columns:
+        return set(df_favs['id'].tolist())
+    return set()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -74,7 +80,7 @@ with tab1:
                 "Prueba con otro termino de busqueda."
             )
         else:
-            df = _añadir_precio_unitario(df)
+            df = _anadir_precio_unitario(df)
 
             if 'prioridad' in df.columns:
                 df_tipo = df[df['prioridad'] == 1]
@@ -99,12 +105,11 @@ with tab1:
                     df_principal['precio_unitario'].notna()]
                 if not df_con_pu.empty:
                     moda = df_con_pu['unidad_precio'].mode()
-                    unidad_comun = (moda.iloc[0]
-                                    if not moda.empty else "")
+                    unidad_comun = moda.iloc[0] if not moda.empty else ""
                 else:
                     unidad_comun = ""
 
-                # ── PASO 2: Insights de decisión rápida ──────────
+                # ── PASO 2: Insights de decision rapida ──────────
                 usa_unitario = (not df_con_pu.empty and unidad_comun)
 
                 if usa_unitario:
@@ -114,14 +119,16 @@ with tab1:
                     df_misma_unidad = pd.DataFrame()
 
                 if usa_unitario and not df_misma_unidad.empty:
-                    # Mejor precio unitario
+                    # Mejor y peor precio unitario
                     idx_mejor = df_misma_unidad['precio_unitario'].idxmin()
                     mejor = df_misma_unidad.loc[idx_mejor]
                     peor_pu = df_misma_unidad['precio_unitario'].max()
-                    mediana_pu = df_misma_unidad['precio_unitario'].median()
+                    idx_peor = df_misma_unidad['precio_unitario'].idxmax()
+                    peor = df_misma_unidad.loc[idx_peor]
                     ahorro_max = peor_pu - mejor['precio_unitario']
                     n_supers = df_misma_unidad['supermercado'].nunique()
 
+                    # Cards: Mas barato + Mas caro + Ahorro maximo
                     fila_insights([
                         {
                             "icono": "emoji_events", "tipo": "success",
@@ -131,31 +138,28 @@ with tab1:
                             "detalle": mejor['supermercado'],
                         },
                         {
-                            "icono": "analytics", "tipo": "neutral",
-                            "titulo": "Mediana",
-                            "valor": f"{mediana_pu:.2f} {unidad_comun}",
-                            "detalle": (
-                                f"{n_supers} supermercados comparados"),
+                            "icono": "arrow_upward", "tipo": "error",
+                            "titulo": "Mas caro",
+                            "valor": f"{peor_pu:.2f} {unidad_comun}",
+                            "detalle": peor['supermercado'],
                         },
                         {
                             "icono": "savings", "tipo": "primary",
                             "titulo": "Ahorro maximo",
                             "valor": f"{ahorro_max:.2f} {unidad_comun}",
                             "detalle": (
-                                f"vs el mas caro "
-                                f"({peor_pu:.2f} {unidad_comun})"),
+                                f"{n_supers} supermercados comparados"),
                         },
                     ])
 
-                    # ── Tabla resumen ─────────────────────────────
+                    # ── Tabla resumen (sin mediana) ───────────────
                     resumen = (df_misma_unidad
                                .groupby('supermercado')['precio_unitario']
-                               .agg(['count', 'min', 'median', 'max'])
+                               .agg(['count', 'min', 'max'])
                                .reset_index())
                     resumen.columns = [
                         'Supermercado', 'Productos',
                         f'Mas barato ({unidad_comun})',
-                        f'Mediana ({unidad_comun})',
                         f'Mas caro ({unidad_comun})',
                     ]
                     pu_min = resumen[
@@ -168,7 +172,6 @@ with tab1:
                     )
                     for col in [
                         f'Mas barato ({unidad_comun})',
-                        f'Mediana ({unidad_comun})',
                         f'Mas caro ({unidad_comun})',
                     ]:
                         resumen[col] = resumen[col].apply(
@@ -176,20 +179,6 @@ with tab1:
                     st.dataframe(
                         resumen, use_container_width=True,
                         hide_index=True)
-
-                    # ── Gráfico ───────────────────────────────────
-                    df_baratos = (
-                        df_misma_unidad
-                        .sort_values('precio_unitario')
-                        .groupby('supermercado').first()
-                        .reset_index())
-                    st.plotly_chart(
-                        grafico_comparador_precios(
-                            df_baratos,
-                            (f"Precio unitario mas bajo de "
-                             f"«{busqueda}» ({unidad_comun})"),
-                            usar_precio_unitario=True),
-                        use_container_width=True)
 
                 else:
                     # Fallback: precio absoluto
@@ -200,8 +189,11 @@ with tab1:
 
                     idx_mejor_abs = df_principal['precio'].idxmin()
                     mejor_abs = df_principal.loc[idx_mejor_abs]
-                    mediana_abs = df_principal['precio'].median()
+                    idx_peor_abs = df_principal['precio'].idxmax()
+                    peor_abs = df_principal.loc[idx_peor_abs]
+                    ahorro_abs = peor_abs['precio'] - mejor_abs['precio']
 
+                    # Cards: Mas barato + Mas caro
                     fila_insights([
                         {
                             "icono": "emoji_events", "tipo": "success",
@@ -210,22 +202,29 @@ with tab1:
                             "detalle": mejor_abs['supermercado'],
                         },
                         {
-                            "icono": "analytics", "tipo": "neutral",
-                            "titulo": "Precio mediana",
-                            "valor": f"{mediana_abs:.2f} EUR",
+                            "icono": "arrow_upward", "tipo": "error",
+                            "titulo": "Mas caro",
+                            "valor": f"{peor_abs['precio']:.2f} EUR",
+                            "detalle": peor_abs['supermercado'],
+                        },
+                        {
+                            "icono": "savings", "tipo": "primary",
+                            "titulo": "Ahorro maximo",
+                            "valor": f"{ahorro_abs:.2f} EUR",
                             "detalle": (
                                 f"{df_principal['supermercado'].nunique()} "
                                 "supermercados"),
                         },
                     ])
 
+                    # Tabla resumen (sin mediana)
                     resumen = (
                         df_principal.groupby('supermercado')['precio']
-                        .agg(['count', 'min', 'median', 'max'])
+                        .agg(['count', 'min', 'max'])
                         .reset_index())
                     resumen.columns = [
                         'Supermercado', 'Productos',
-                        'Mas barato', 'Mediana', 'Mas caro',
+                        'Mas barato', 'Mas caro',
                     ]
                     precio_min_global = resumen['Mas barato'].min()
                     resumen['vs mas barato'] = resumen[
@@ -234,25 +233,14 @@ with tab1:
                         lambda x: "Mas barato" if x == precio_min_global
                         else f"+{((x - precio_min_global) / precio_min_global * 100):.0f}%"
                     )
-                    for col in ['Mas barato', 'Mediana', 'Mas caro']:
+                    for col in ['Mas barato', 'Mas caro']:
                         resumen[col] = resumen[col].apply(
                             lambda x: f"{x:.2f} EUR")
                     st.dataframe(
                         resumen, use_container_width=True,
                         hide_index=True)
 
-                    df_baratos = (
-                        df_principal.sort_values('precio')
-                        .groupby('supermercado').first()
-                        .reset_index())
-                    st.plotly_chart(
-                        grafico_comparador_precios(
-                            df_baratos,
-                            (f"Precio mas bajo de «{busqueda}» "
-                             "por supermercado")),
-                        use_container_width=True)
-
-            # ── PASO 3: Todos los productos (con filtros + paginación)
+            # ── PASO 3: Todos los productos (filtros, SIN paginacion)
             st.markdown("---")
             encabezado(
                 "Todos los productos encontrados",
@@ -303,57 +291,153 @@ with tab1:
                 ]
                 cols = [c for c in cols if c in df_filtrado.columns]
 
-                # Paginación
-                df_pagina = paginar_dataframe(
-                    df_filtrado, "pag_comp", filas_por_pagina=20)
+                # Render directo sin paginacion
                 st.dataframe(
-                    df_pagina[cols],
+                    df_filtrado[cols],
                     use_container_width=True, hide_index=True)
 
             # ── Menciones secundarias ─────────────────────────────
             if not df_otros.empty:
-                df_otros = _añadir_precio_unitario(df_otros)
+                df_otros = _anadir_precio_unitario(df_otros)
                 with st.expander(
                     f"Ver {len(df_otros)} menciones secundarias "
                     f"de '{busqueda}'"
                 ):
                     cols_o = [c for c in cols if c in df_otros.columns]
-                    df_pag_otros = paginar_dataframe(
-                        df_otros.sort_values('precio'),
-                        "pag_comp_otros", filas_por_pagina=20)
                     st.dataframe(
-                        df_pag_otros[cols_o],
+                        df_otros[cols_o].sort_values('precio'),
                         use_container_width=True, hide_index=True)
 
-            # ── Guardar equivalencia ──────────────────────────────
-            with st.expander("Guardar como equivalencia"):
-                if not df_filtrado.empty:
-                    opciones_eq = {
+            # ── PASO 4: Anadir a favoritos desde comparador ───────
+            st.markdown("---")
+            encabezado(
+                "Anadir a favoritos", "bookmark_add", nivel=3)
+
+            if not df_filtrado.empty:
+                ids_fav = _ids_favoritos_actuales()
+
+                # Boton rapido: anadir el mas barato
+                col_rapido, col_manual = st.columns(2)
+
+                with col_rapido:
+                    # Determinar el mas barato
+                    if df_filtrado['precio_unitario'].notna().any():
+                        idx_mas_barato = df_filtrado[
+                            'precio_unitario'].idxmin()
+                    else:
+                        idx_mas_barato = df_filtrado['precio'].idxmin()
+                    mas_barato = df_filtrado.loc[idx_mas_barato]
+                    nombre_barato = (
+                        f"{mas_barato['nombre']} "
+                        f"({mas_barato['supermercado']})")
+                    ya_en_favs = mas_barato['id'] in ids_fav
+
+                    st.markdown(f"**El mas barato:** {nombre_barato}")
+                    if ya_en_favs:
+                        st.caption("Ya esta en favoritos.")
+                    else:
+                        if st.button(
+                            "Anadir el mas barato a favoritos",
+                            key="comp_fav_rapido"
+                        ):
+                            db.agregar_favorito(mas_barato['id'])
+                            st.success(
+                                f"Anadido: {nombre_barato}")
+                            st.rerun()
+
+                with col_manual:
+                    # Seleccion manual
+                    opciones_fav = {
                         (f"{row['nombre']} ({row['supermercado']}) - "
                          f"{row['precio']:.2f} EUR"): row['id']
                         for _, row in df_filtrado.iterrows()
+                        if row['id'] not in ids_fav
                     }
-                    ids_sel = st.multiselect(
-                        "Selecciona productos equivalentes:",
-                        list(opciones_eq.keys()), key="comp_equiv")
-                    nombre_equiv = st.text_input(
-                        "Nombre:",
-                        placeholder=f"Ej: {busqueda}",
-                        key="comp_nombre_eq")
-                    if st.button(
-                        "Guardar equivalencia", key="comp_btn_eq"
-                    ):
-                        if nombre_equiv and len(ids_sel) >= 2:
-                            db.crear_equivalencia(
-                                nombre_equiv,
-                                [opciones_eq[o] for o in ids_sel])
-                            st.success(
-                                f"Equivalencia «{nombre_equiv}» "
-                                "guardada.")
-                        else:
-                            st.warning(
-                                "Necesitas un nombre y al menos "
-                                "2 productos.")
+                    if opciones_fav:
+                        fav_sel = st.selectbox(
+                            "O selecciona otro producto:",
+                            list(opciones_fav.keys()),
+                            key="comp_fav_manual")
+                        if st.button(
+                            "Anadir seleccionado",
+                            key="comp_fav_manual_btn"
+                        ):
+                            db.agregar_favorito(opciones_fav[fav_sel])
+                            st.success("Anadido a favoritos.")
+                            st.rerun()
+                    else:
+                        st.caption(
+                            "Todos los productos filtrados ya "
+                            "estan en favoritos.")
+
+            # ── PASO 5: Guardar equivalencia ──────────────────────
+            st.markdown("---")
+            encabezado(
+                "Guardar equivalencia", "compare_arrows", nivel=3)
+            st.caption(
+                "Selecciona al menos 2 productos del mismo tipo "
+                "de distintos supermercados para crear una "
+                "equivalencia y seguir su precio.")
+
+            if not df_filtrado.empty:
+                opciones_eq = {
+                    (f"{row['nombre']} ({row['supermercado']}) - "
+                     f"{row['precio']:.2f} EUR"): row['id']
+                    for _, row in df_filtrado.iterrows()
+                }
+
+                # Boton rapido para preseleccionar los mas baratos
+                # de cada supermercado
+                if st.button(
+                    "Preseleccionar el mas barato de cada super",
+                    key="comp_eq_presel"
+                ):
+                    if df_filtrado['precio_unitario'].notna().any():
+                        presel = (
+                            df_filtrado
+                            .sort_values('precio_unitario')
+                            .groupby('supermercado').first()
+                            .reset_index())
+                    else:
+                        presel = (
+                            df_filtrado
+                            .sort_values('precio')
+                            .groupby('supermercado').first()
+                            .reset_index())
+                    labels_presel = []
+                    for _, r in presel.iterrows():
+                        lbl = (f"{r['nombre']} ({r['supermercado']}) "
+                               f"- {r['precio']:.2f} EUR")
+                        if lbl in opciones_eq:
+                            labels_presel.append(lbl)
+                    st.session_state['comp_equiv'] = labels_presel
+
+                ids_sel = st.multiselect(
+                    "Selecciona productos equivalentes:",
+                    list(opciones_eq.keys()), key="comp_equiv")
+                nombre_equiv = st.text_input(
+                    "Nombre de la equivalencia:",
+                    placeholder=f"Ej: {busqueda}",
+                    key="comp_nombre_eq")
+
+                if st.button(
+                    "Guardar equivalencia", key="comp_btn_eq",
+                    type="primary"
+                ):
+                    if not nombre_equiv:
+                        st.warning("Escribe un nombre para la "
+                                   "equivalencia.")
+                    elif len(ids_sel) < 2:
+                        st.warning("Selecciona al menos 2 "
+                                   "productos.")
+                    else:
+                        db.crear_equivalencia(
+                            nombre_equiv,
+                            [opciones_eq[o] for o in ids_sel])
+                        st.success(
+                            f"Equivalencia «{nombre_equiv}» "
+                            f"guardada con {len(ids_sel)} "
+                            "productos.")
     else:
         estado_vacio(
             "balance",
