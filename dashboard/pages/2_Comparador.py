@@ -16,8 +16,8 @@ from database.init_db import inicializar_base_datos
 from dashboard.utils.charts import grafico_comparador_precios
 from matching.normalizer import calcular_precio_unitario
 
-st.set_page_config(page_title="Comparador", page_icon="⚖️", layout="wide")
-st.title("⚖️ Comparador de precios")
+st.set_page_config(page_title="Comparador", page_icon="", layout="wide")
+st.title("Comparador de precios")
 
 inicializar_base_datos(_DB_PATH)
 db = DatabaseManager(_DB_PATH)
@@ -39,14 +39,11 @@ def _añadir_precio_unitario(df):
     return df
 
 
-tab1, tab2 = st.tabs(["🔍 Comparar precios", "📌 Equivalencias guardadas"])
+tab1, tab2 = st.tabs(["Comparar precios", "Equivalencias guardadas"])
 
 with tab1:
     st.markdown("Busca un producto y compara precios **unitarios** (€/L, €/kg) "
                 "entre supermercados.")
-    st.caption("La búsqueda prioriza el **tipo** de producto: 'leche' muestra "
-               "solo lácteos, no 'café con leche'.")
-
     busqueda = st.text_input("Buscar producto:",
                              placeholder="Ej: leche entera, café, aceite oliva...",
                              key="comp_busqueda")
@@ -95,7 +92,7 @@ with tab1:
                                            f'Más caro ({unidad_comun})']
                         pu_min = resumen[f'Más barato ({unidad_comun})'].min()
                         resumen['vs más barato'] = resumen[f'Más barato ({unidad_comun})'].apply(
-                            lambda x: "⭐ Más barato" if x == pu_min
+                            lambda x: "Más barato" if x == pu_min
                             else f"+{((x - pu_min) / pu_min * 100):.0f}%")
                         for col in [f'Más barato ({unidad_comun})', f'Mediana ({unidad_comun})',
                                     f'Más caro ({unidad_comun})']:
@@ -113,7 +110,7 @@ with tab1:
                         use_container_width=True)
                 else:
                     # Sin precio unitario → fallback a precio absoluto
-                    st.caption("⚠️ No hay datos de formato suficientes para "
+                    st.caption("No hay datos de formato suficientes para "
                                "comparar por precio unitario. Mostrando precio absoluto.")
                     resumen = df_principal.groupby('supermercado')['precio'].agg(
                         ['count', 'min', 'median', 'max']).reset_index()
@@ -121,7 +118,7 @@ with tab1:
                                        'Mediana', 'Más caro']
                     precio_min_global = resumen['Más barato'].min()
                     resumen['vs más barato'] = resumen['Más barato'].apply(
-                        lambda x: "⭐ Más barato" if x == precio_min_global
+                        lambda x: "Más barato" if x == precio_min_global
                         else f"+{((x - precio_min_global) / precio_min_global * 100):.0f}%")
                     for col in ['Más barato', 'Mediana', 'Más caro']:
                         resumen[col] = resumen[col].apply(lambda x: f"{x:.2f} €")
@@ -181,7 +178,7 @@ with tab1:
                     st.dataframe(df_otros[cols_o].sort_values('precio'),
                                  use_container_width=True, hide_index=True)
 
-            with st.expander("💾 Guardar como equivalencia"):
+            with st.expander("Guardar como equivalencia"):
                 opciones_eq = {
                     f"{row['nombre']} ({row['supermercado']}) - {row['precio']:.2f}€": row['id']
                     for _, row in df_filtrado.iterrows()}

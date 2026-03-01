@@ -19,10 +19,10 @@ from dashboard.utils.charts import (
     grafico_distribucion_precios_completa,
 )
 
-st.set_page_config(page_title="Supermarket Price Tracker", page_icon="🛒",
+st.set_page_config(page_title="Supermarket Price Tracker", page_icon="",
                    layout="wide", initial_sidebar_state="expanded")
 
-st.sidebar.title("🛒 Price Tracker")
+st.sidebar.title("Price Tracker")
 st.sidebar.markdown("---")
 st.sidebar.caption(f"BD: `{os.path.basename(_DB_PATH)}`")
 
@@ -34,10 +34,10 @@ _init_db()
 db = DatabaseManager(_DB_PATH)
 
 if not os.path.exists(_DB_PATH):
-    st.error(f"⚠️ No se encontró la base de datos en:\n\n`{_DB_PATH}`")
+    st.error(f"No se encontró la base de datos en:\n\n`{_DB_PATH}`")
     st.stop()
 
-st.title("🛒 Supermarket Price Tracker")
+st.title("Supermarket Price Tracker")
 st.markdown("Comparador de precios de supermercados españoles con histórico semanal.")
 
 # ── Métricas ──────────────────────────────────────────────────────────
@@ -58,7 +58,7 @@ with col5:
     st.metric("Días de datos", dias)
 
 if dias <= 1:
-    st.info("📊 Datos de un solo día. El histórico se construye ejecutando "
+    st.info("Datos de un solo día. El histórico se construye ejecutando "
             "el scraper semanalmente.")
 
 st.markdown("---")
@@ -103,10 +103,7 @@ if stats.get('productos_por_supermercado'):
 
 # ── Búsqueda rápida ──────────────────────────────────────────────────
 st.markdown("---")
-st.subheader("🔍 Búsqueda rápida de productos")
-st.caption("Busca por tipo de producto: 'leche' muestra solo lácteos, "
-           "no 'café con leche'.")
-
+st.subheader("Búsqueda rápida de productos")
 col_b, col_s, col_c = st.columns([3, 1, 1])
 with col_b:
     busqueda = st.text_input("Buscar:", placeholder="Ej: leche, café, aceite...",
@@ -142,7 +139,7 @@ if busqueda:
             cols_mostrar = [c for c in cols_mostrar if c in df_res.columns]
 
             if not df_tipo.empty:
-                st.caption(f"✅ {len(df_tipo)} resultados directos (tipo = '{busqueda}')")
+                st.caption(f"{len(df_tipo)} resultados directos (tipo = '{busqueda}')")
                 st.dataframe(df_tipo[cols_mostrar],
                              use_container_width=True, hide_index=True)
 
