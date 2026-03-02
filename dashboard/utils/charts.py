@@ -5,6 +5,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
+import json
+import uuid
 
 COLORES_SUPERMERCADO = {
     'Mercadona': '#2ECC71',
@@ -65,8 +67,9 @@ def grafico_historico_precio(df_historico, nombre_producto=""):
             'Precio: <b>%{y:.2f} EUR</b>'
             '<extra></extra>'),
     ))
+    layout_zoom = {**_LAYOUT_BASE, 'margin': dict(l=70, r=30, t=70, b=85)}
     fig.update_layout(
-        **_LAYOUT_BASE,
+        **layout_zoom,
         title=f"Evolucion de precio: {nombre_producto}",
         xaxis_title="Fecha", yaxis_title="Precio (EUR)",
         yaxis_tickprefix="EUR ", xaxis_tickformat='%d/%m/%Y',
@@ -100,8 +103,9 @@ def grafico_comparativa_supermercados(df_historico_equiv):
                 '%{x|%d/%m/%Y}'
                 '<extra></extra>'),
         ))
+    layout_full = {**_LAYOUT_BASE, 'margin': dict(l=70, r=30, t=70, b=85)}
     fig.update_layout(
-        **_LAYOUT_BASE,
+        **layout_full,
         title="Comparativa de precios entre supermercados",
         xaxis_title="Fecha", yaxis_title="Precio (EUR)",
         yaxis_tickprefix="EUR ", xaxis_tickformat='%d/%m/%Y',
@@ -243,12 +247,82 @@ def grafico_productos_por_supermercado(stats):
     return fig
 
 
+
+
+def apex_productos_por_supermercado_html(stats):
+    """HTML embebible con ApexCharts para productos por supermercado."""
+    datos = stats.get('productos_por_supermercado', {})
+    if not datos:
+        return "<div style='padding:12px;color:#78909C'>No hay productos registrados</div>"
+
+    datos_ord = dict(sorted(datos.items(), key=lambda x: x[1], reverse=True))
+    supers = list(datos_ord.keys())
+    cantidades = [int(v) for v in datos_ord.values()]
+    colores = [COLORES_SUPERMERCADO.get(s, '#95A5A6') for s in supers]
+
+    chart_id = f"apex-prod-{uuid.uuid4().hex[:8]}"
+    payload = {
+        "supers": supers,
+        "cantidades": cantidades,
+        "colores": colores,
+        "max_val": max(cantidades) if cantidades else 0,
+        "tick_step": 2000,
+    }
+
+    return f"""
+<div style="font-family:Inter,Segoe UI,Roboto,sans-serif;">
+  <div id="{chart_id}" style="height:340px;"></div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+<script>
+  const d = {json.dumps(payload)};
+  const options = {{
+    chart: {{ type: 'bar', height: 340, toolbar: {{ show: false }}, fontFamily: 'Inter, Segoe UI, Roboto, sans-serif' }},
+    title: {{ text: 'productos por supermercado', align: 'left', style: {{ fontSize: '18px', fontWeight: 600, color: '#111827' }} }},
+    series: [{{ name: 'Productos', data: d.cantidades }}],
+    colors: d.colores,
+    plotOptions: {{
+      bar: {{
+        horizontal: true,
+        borderRadius: 3,
+        distributed: true,
+        dataLabels: {{ position: 'right' }}
+      }}
+    }},
+    dataLabels: {{
+      enabled: true,
+      formatter: (v) => new Intl.NumberFormat('es-ES').format(v),
+      style: {{ fontSize: '14px', fontWeight: 600, colors: ['#FFFFFF'] }},
+      textAnchor: 'end',
+      offsetX: -22,
+      dropShadow: {{ enabled: false }}
+    }},
+    xaxis: {{
+      categories: d.supers,
+      min: 0,
+      max: Math.max(d.tick_step, Math.ceil(d.max_val / d.tick_step) * d.tick_step),
+      tickAmount: Math.max(1, Math.ceil(Math.max(d.tick_step, Math.ceil(d.max_val / d.tick_step) * d.tick_step) / d.tick_step)),
+      labels: {{ formatter: (v) => `${{Math.round(v)}}` }}
+    }},
+    yaxis: {{ labels: {{ style: {{ colors: '#4B5563' }} }} }},
+    grid: {{ borderColor: '#EEF2F7', strokeDashArray: 4, padding: {{ left: 0, right: 8 }} }},
+    tooltip: {{
+      theme: 'dark',
+      y: {{ formatter: (v) => `${{new Intl.NumberFormat('es-ES').format(v)}} productos` }}
+    }},
+    legend: {{ show: false }}
+  }};
+  new ApexCharts(document.querySelector('#{chart_id}'), options).render();
+</script>
+"""
+
 def grafico_distribucion_precios_zoom(df, supermercado=""):
-    """Distribucion de precios (percentil 95) con diseno limpio sin duplicados."""
+    """Distribucion de precios (percentil 95) estilo dashboard de referencia."""
     if df.empty or 'precio' not in df.columns:
         return _grafico_vacio("No hay datos de precios")
-    color = COLORES_SUPERMERCADO.get(supermercado, '#3498DB')
-    precios = df['precio'].dropna()
+
+    color = COLORES_SUPERMERCADO.get(supermercado, '#95A5A6')
+    precios = df['precio'].dropna().astype(float)
     if precios.empty:
         return _grafico_vacio("No hay datos de precios")
 
@@ -256,133 +330,95 @@ def grafico_distribucion_precios_zoom(df, supermercado=""):
     mediana = float(np.median(precios))
     media = float(np.mean(precios))
     precios_zoom = precios[precios <= p95]
-    total = len(precios)
-    en_rango = len(precios_zoom)
 
     fig = go.Figure()
-
-    # Histograma principal (una sola traza para evitar elementos duplicados)
     fig.add_trace(go.Histogram(
-        x=precios_zoom, nbinsx=min(45, max(20, int(np.sqrt(en_rango) * 2))),
-        marker_color=color, opacity=0.55,
-        marker_line_color='rgba(255,255,255,0.4)',
-        marker_line_width=0.8,
+        x=precios_zoom,
+        xbins=dict(start=0, end=max(5, np.ceil(p95 / 5) * 5), size=5),
+        marker_color=color,
+        opacity=0.85,
+        marker_line_color='rgba(255,255,255,0.55)',
+        marker_line_width=1,
         hovertemplate=(
-            "Rango: <b>%{x:.2f} EUR</b><br>"
-            "Productos: <b>%{y}</b>"
-            "<extra></extra>"),
+            "Rango (inicio): <b>%{x:.0f} EUR</b><br>"
+            "Productos: <b>%{y}</b><extra></extra>"
+        ),
     ))
 
-    # Lineas guia unicas
-    fig.add_vline(
-        x=mediana, line_dash="dash", line_color="#1A1A1A",
-        line_width=2,
-        annotation_text=f"Mediana: {mediana:.2f} EUR",
-        annotation_position="top",
-        annotation_font=dict(size=12, color="#1A1A1A",
-                             family="Inter"),
-        annotation_bgcolor="rgba(255,255,255,0.9)",
-        annotation_bordercolor="#C4CDD5",
-        annotation_borderwidth=1,
-        annotation_borderpad=4,
-    )
+    fig.add_vline(x=mediana, line_dash='dash', line_color='#1A1A1A', line_width=1.6)
+    fig.add_vline(x=media, line_dash='dot', line_color='#607D8B', line_width=1.6)
 
-    fig.add_vline(
-        x=media, line_dash="dot", line_color="#607D8B",
-        line_width=1.8,
-        annotation_text=f"Media: {media:.2f} EUR",
-        annotation_position="top left",
-        annotation_font=dict(size=11, color="#546E7A"),
-        annotation_bgcolor="rgba(255,255,255,0.85)",
-        annotation_bordercolor="#CFD8DC",
-        annotation_borderwidth=1,
+    fig.add_annotation(
+        x=mediana, y=1.02, xref='x', yref='paper',
+        text=f"Mediana: {mediana:.2f} EUR",
+        showarrow=False,
+        bgcolor='rgba(255,255,255,0.92)',
+        bordercolor='#C4CDD5', borderwidth=1, borderpad=3,
+        font=dict(size=12, color='#2C3E50'),
+    )
+    fig.add_annotation(
+        x=media, y=1.02, xref='x', yref='paper',
+        text=f"Media: {media:.2f} EUR",
+        showarrow=False,
+        bgcolor='rgba(255,255,255,0.92)',
+        bordercolor='#CFD8DC', borderwidth=1, borderpad=3,
+        font=dict(size=12, color='#607D8B'),
     )
 
     fig.update_layout(
         **_LAYOUT_BASE,
-        title=(f"{supermercado} — 95% de productos "
-               f"(hasta {p95:.0f} EUR)"),
-        xaxis_title="Precio (EUR)", xaxis_tickprefix="EUR ",
-        yaxis_title="Numero de productos",
-        height=420,
-        bargap=0.05,
-    )
-
-    # Contador de productos en una unica etiqueta (evita duplicados)
-    fig.add_annotation(
-        text=(
-            f"<span style='color:{color}; font-weight:700'>{en_rango:,}</span>"
-            " de "
-            f"<span style='color:{color}; font-weight:700'>{total:,}</span>"
-            " productos"
-        ),
-        xref="paper", yref="paper", x=0.98, y=0.95,
-        showarrow=False,
-        font=dict(size=12, color="#5A6C7D", family="Inter"),
-        xanchor="right",
-        bordercolor="#CFD8DC", borderwidth=1,
-        borderpad=4,
-        bgcolor="rgba(255,255,255,0.88)",
+        title=f"{supermercado} — 95% de productos",
+        xaxis=dict(dtick=5, tickprefix=''),
+        yaxis=dict(gridcolor='#E8EDF3'),
+        xaxis_title='<b>Precio en €</b>',
+        yaxis_title='<b>Número de productos</b>',
+        height=520,
+        bargap=0.08,
     )
     return fig
 
 
 def grafico_distribucion_precios_completa(df, supermercado=""):
-    """Distribucion completa de precios (escala logaritmica)."""
+    """Distribucion completa de precios."""
     if df.empty or 'precio' not in df.columns:
         return _grafico_vacio("No hay datos de precios")
-    color = COLORES_SUPERMERCADO.get(supermercado, '#3498DB')
-    precios = df['precio'].dropna()
+    color = COLORES_SUPERMERCADO.get(supermercado, '#95A5A6')
+    precios = df['precio'].dropna().astype(float)
     if precios.empty:
         return _grafico_vacio("No hay datos de precios")
 
     mediana = float(np.median(precios))
     media = float(np.mean(precios))
+    max_v = float(precios.max())
 
     fig = go.Figure()
     fig.add_trace(go.Histogram(
-        x=precios, nbinsx=min(70, max(30, int(np.sqrt(len(precios)) * 2))),
-        marker_color=color, opacity=0.55,
-        marker_line_color='rgba(255,255,255,0.4)',
-        marker_line_width=0.8,
-        hovertemplate=(
-            "Rango: <b>%{x:.2f} EUR</b><br>"
-            "Productos: <b>%{y}</b>"
-            "<extra></extra>"),
+        x=precios,
+        xbins=dict(start=0, end=max(5, np.ceil(max_v / 5) * 5), size=5),
+        marker_color=color,
+        opacity=0.85,
+        marker_line_color='rgba(255,255,255,0.55)',
+        marker_line_width=1,
+        hovertemplate="Rango (inicio): <b>%{x:.0f} EUR</b><br>Productos: <b>%{y}</b><extra></extra>",
     ))
 
-    fig.add_vline(
-        x=mediana, line_dash="dash", line_color="#1A1A1A",
-        line_width=2,
-        annotation_text=f"Mediana: {mediana:.2f} EUR",
-        annotation_position="top",
-        annotation_font=dict(size=12, color="#1A1A1A",
-                             family="Inter"),
-        annotation_bgcolor="rgba(255,255,255,0.9)",
-        annotation_bordercolor="#C4CDD5",
-        annotation_borderwidth=1,
-        annotation_borderpad=4,
-    )
-
-    fig.add_vline(
-        x=media, line_dash="dot", line_color="#607D8B",
-        line_width=1.8,
-        annotation_text=f"Media: {media:.2f} EUR",
-        annotation_position="top left",
-        annotation_font=dict(size=11, color="#546E7A"),
-        annotation_bgcolor="rgba(255,255,255,0.85)",
-        annotation_bordercolor="#CFD8DC",
-        annotation_borderwidth=1,
-    )
+    fig.add_vline(x=mediana, line_dash='dash', line_color='#1A1A1A', line_width=1.6)
+    fig.add_vline(x=media, line_dash='dot', line_color='#607D8B', line_width=1.6)
+    fig.add_annotation(x=mediana, y=1.02, xref='x', yref='paper', text=f"Mediana: {mediana:.2f} EUR", showarrow=False,
+                       bgcolor='rgba(255,255,255,0.92)', bordercolor='#C4CDD5', borderwidth=1, borderpad=3,
+                       font=dict(size=12, color='#2C3E50'))
+    fig.add_annotation(x=media, y=1.02, xref='x', yref='paper', text=f"Media: {media:.2f} EUR", showarrow=False,
+                       bgcolor='rgba(255,255,255,0.92)', bordercolor='#CFD8DC', borderwidth=1, borderpad=3,
+                       font=dict(size=12, color='#607D8B'))
 
     fig.update_layout(
         **_LAYOUT_BASE,
-        title=(f"{supermercado} — Todos los precios "
-               "(escala logaritmica)"),
-        xaxis_title="Precio (EUR)", xaxis_tickprefix="EUR ",
-        yaxis_title="Productos (escala log)", yaxis_type="log",
-        height=420,
-        bargap=0.05,
+        title=f"{supermercado} — Distribución completa",
+        xaxis=dict(dtick=5, tickprefix=''),
+        xaxis_title='<b>Precio en €</b>',
+        yaxis_title='<b>Número de productos</b>',
+        height=520,
+        bargap=0.08,
     )
     return fig
 
@@ -390,6 +426,107 @@ def grafico_distribucion_precios_completa(df, supermercado=""):
 def grafico_distribucion_precios(df, supermercado=""):
     return grafico_distribucion_precios_zoom(df, supermercado)
 
+
+
+def apex_distribucion_precios_html(df, supermercado="", completa=False):
+    """Devuelve HTML embebible con ApexCharts para distribucion de precios."""
+    if df.empty or 'precio' not in df.columns:
+        return "<div style='padding:12px;color:#78909C'>No hay datos de precios</div>"
+
+    precios = df['precio'].dropna().astype(float)
+    if precios.empty:
+        return "<div style='padding:12px;color:#78909C'>No hay datos de precios</div>"
+
+    color = COLORES_SUPERMERCADO.get(supermercado, '#95A5A6')
+    mediana = float(np.median(precios))
+    media = float(np.mean(precios))
+
+    if completa:
+        precios_plot = precios
+        subtitulo = f"{supermercado} — Distribucion completa"
+    else:
+        p95 = float(np.percentile(precios, 95))
+        precios_plot = precios[precios <= p95]
+        subtitulo = f"{supermercado} — 95% de productos (hasta {p95:.0f} EUR)"
+
+    max_val = float(precios_plot.max()) if not precios_plot.empty else float(precios.max())
+    tick_max = int(max(5, np.ceil(max_val / 5.0) * 5))
+    bins = np.arange(0, tick_max + 5, 5)
+    counts, edges = np.histogram(precios_plot, bins=bins)
+    categorias = [str(int(e)) for e in edges[:-1]]
+
+    def _snap(v):
+        return str(int(round(v / 5.0) * 5))
+
+    mediana_tick = _snap(mediana)
+    media_tick = _snap(media)
+
+    chart_id = f"apex-dist-{uuid.uuid4().hex[:8]}"
+    payload = {
+        "categories": categorias,
+        "counts": [int(c) for c in counts.tolist()],
+        "color": color,
+        "mediana_tick": mediana_tick,
+        "media_tick": media_tick,
+    }
+
+    return f"""
+<div style="font-family:Inter,Segoe UI,Roboto,sans-serif;">
+  <div style="font-weight:600;font-size:18px;margin:0 0 6px 0;">{subtitulo}</div>
+
+  <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:8px 0 12px 0;">
+    <div style="border:1px solid #D7DEE6;background:#FFFFFF;border-radius:12px;padding:12px 14px;">
+      <div style="font-size:12px;letter-spacing:.02em;color:#5A6C7D;text-transform:uppercase;font-weight:600;">Mediana</div>
+      <div style="font-size:34px;line-height:1.1;font-weight:700;color:#111827;margin-top:4px;">{mediana:.2f} €</div>
+    </div>
+    <div style="border:1px solid #D7DEE6;background:#FFFFFF;border-radius:12px;padding:12px 14px;">
+      <div style="font-size:12px;letter-spacing:.02em;color:#5A6C7D;text-transform:uppercase;font-weight:600;">Media</div>
+      <div style="font-size:34px;line-height:1.1;font-weight:700;color:#111827;margin-top:4px;">{media:.2f} €</div>
+    </div>
+  </div>
+
+  <div style="display:flex;justify-content:flex-end;margin:0 0 8px 0;">
+    <div style="border:1px solid #CFD8DC;background:rgba(255,255,255,.88);padding:6px 10px;border-radius:6px;color:#5A6C7D;font-size:12px;">
+      <span style='color:{color};font-weight:700'>{len(precios_plot):,}</span> de <span style='color:{color};font-weight:700'>{len(precios):,}</span> productos
+    </div>
+  </div>
+
+  <div id="{chart_id}" style="height:420px;"></div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+<script>
+  const d = {json.dumps(payload)};
+  const options = {{
+    chart: {{ type: 'bar', height: 420, toolbar: {{ show: false }}, fontFamily: 'Inter, Segoe UI, Roboto, sans-serif' }},
+    series: [{{ name: 'Productos', data: d.counts }}],
+    colors: [d.color],
+    plotOptions: {{ bar: {{ borderRadius: 3, columnWidth: '92%' }} }},
+    dataLabels: {{ enabled: false }},
+    xaxis: {{
+      categories: d.categories,
+      tickAmount: Math.max(2, d.categories.length-1),
+      labels: {{ formatter: (v) => `${{v}}` }},
+      title: {{ text: 'Precio en €', style: {{ fontSize: '20px', fontWeight: 700, color: '#111827' }} }}
+    }},
+    yaxis: {{
+      title: {{ text: 'Numero de productos', style: {{ fontSize: '20px', fontWeight: 700, color: '#111827' }} }}
+    }},
+    grid: {{ borderColor: '#EEF2F7', strokeDashArray: 4, padding: {{ left: 0, right: 8 }} }},
+    tooltip: {{
+      theme: 'dark',
+      x: {{ formatter: (v) => `${{v}} - ${{Number(v)+5}}` }},
+      y: {{ formatter: (v) => `${{v}} productos` }}
+    }},
+    annotations: {{
+      xaxis: [
+        {{ x: d.mediana_tick, borderColor: '#1A1A1A', strokeDashArray: 5, label: {{ text: 'Mediana', orientation: 'horizontal', style: {{ background: '#FFFFFF', color: '#1A1A1A', borderColor: '#C4CDD5' }} }} }},
+        {{ x: d.media_tick, borderColor: '#607D8B', strokeDashArray: 2, label: {{ text: 'Media', orientation: 'horizontal', style: {{ background: '#FFFFFF', color: '#546E7A', borderColor: '#CFD8DC' }} }} }}
+      ]
+    }}
+  }};
+  new ApexCharts(document.querySelector('#{chart_id}'), options).render();
+</script>
+"""
 
 def _grafico_vacio(mensaje="Sin datos disponibles"):
     fig = go.Figure()
