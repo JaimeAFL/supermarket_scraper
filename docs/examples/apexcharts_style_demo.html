@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Demo Visual - ApexCharts</title>
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+  <style>
+    :root {
+      --bg: #F7F9FC;
+      --surface: #FFFFFF;
+      --text: #1F2937;
+      --muted: #6B7280;
+      --border: #E5E7EB;
+      --primary: #2F80ED;
+      --secondary: #56CCF2;
+      --success: #27AE60;
+      --warning: #F2C94C;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 24px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      display: grid;
+      gap: 16px;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 600;
+    }
+    .subtitle {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .badge {
+      border: 1px solid #D8E3EF;
+      background: #FDFEFF;
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 13px;
+      color: #425466;
+      white-space: nowrap;
+    }
+    .badge strong { color: var(--primary); }
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .kpi {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+    }
+    .kpi .label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    .kpi .value {
+      font-size: 18px;
+      font-weight: 700;
+    }
+    #chart { height: 420px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <div class="header">
+        <div>
+          <h1>Distribución de precios (ApexCharts)</h1>
+          <div class="subtitle">Prueba visual de estilo profesional para dashboard de supermercado.</div>
+        </div>
+        <div class="badge"><strong>1.246</strong> de <strong>1.312</strong> productos</div>
+      </div>
+      <div id="chart"></div>
+      <div class="kpis">
+        <div class="kpi">
+          <div class="label">Mediana</div>
+          <div class="value">3,45 €</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Media</div>
+          <div class="value">4,12 €</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const priceLabels = ["0", "5", "10", "15", "20", "25", "30"];
+    const bins = [220, 180, 120, 72, 35, 14, 5];
+
+    const medianaX = 5;
+    const mediaX = 10;
+
+    const options = {
+
+      chart: {
+        type: "bar",
+        height: 420,
+        toolbar: { show: false },
+        fontFamily: "Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif"
+      },
+      series: [{ name: "Productos", data: bins }],
+      xaxis: {
+        categories: priceLabels,
+        title: { text: "Precio" },
+        labels: {
+          style: { colors: "#6B7280" },
+          formatter: (val) => `€ ${val}`
+        }
+      },
+      yaxis: {
+        title: { text: "Número de productos" },
+        labels: { style: { colors: "#6B7280" } }
+      },
+      colors: ["#2F80ED"],
+      plotOptions: {
+        bar: {
+          borderRadius: 4,
+          columnWidth: "85%"
+        }
+      },
+      grid: {
+        borderColor: "#EEF2F7",
+        strokeDashArray: 4,
+        xaxis: { lines: { show: false } },
+        yaxis: { lines: { show: true } }
+      },
+      tooltip: {
+        theme: "dark",
+        y: { formatter: (v) => `${v} productos` },
+        x: { formatter: (v) => `€ ${v}` }
+      },
+      annotations: {
+        xaxis: [
+          {
+            x: medianaX.toString(),
+            strokeDashArray: 5,
+            borderColor: "#111827",
+            label: {
+              text: "Mediana",
+              style: {
+                background: "#FFFFFF",
+                color: "#111827",
+                borderColor: "#D1D5DB",
+                fontSize: "12px"
+              }
+            }
+          },
+          {
+            x: mediaX.toString(),
+            borderColor: "#607D8B",
+            strokeDashArray: 2,
+            label: {
+              text: "Media",
+              style: {
+                background: "#FFFFFF",
+                color: "#334155",
+                borderColor: "#CBD5E1",
+                fontSize: "12px"
+              }
+            }
+          }
+        ]
+      }
+    };
+
+    const chart = new ApexCharts(document.querySelector("#chart"), options);
+    chart.render();
+  </script>
+</body>
+</html>

@@ -10,11 +10,12 @@ _DB_PATH = os.path.join(_PROJECT_ROOT, "database", "supermercados.db")
 os.environ.setdefault("SUPERMARKET_DB_PATH", _DB_PATH)
 
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 from database.database_db_manager import DatabaseManager
 from database.init_db import inicializar_base_datos
 from dashboard.utils.charts import (
-    grafico_productos_por_supermercado,
+    apex_productos_por_supermercado_html,
     grafico_distribucion_precios_zoom,
     grafico_distribucion_precios_completa,
 )
@@ -67,8 +68,11 @@ if dias <= 1:
 st.markdown("---")
 
 # ── Productos por supermercado ────────────────────────────────────────
-st.plotly_chart(grafico_productos_por_supermercado(stats),
-                use_container_width=True)
+components.html(
+    apex_productos_por_supermercado_html(stats),
+    height=360,
+    scrolling=False,
+)
 
 # ── Distribucion de precios ──────────────────────────────────────────
 st.markdown("---")
@@ -85,11 +89,15 @@ if supers_disponibles:
     with st.spinner("Cargando datos..."):
         df_super = _cargar_productos_super(db, super_sel)
 
-    st.plotly_chart(grafico_distribucion_precios_zoom(df_super, super_sel),
-                    use_container_width=True)
+    st.plotly_chart(
+        grafico_distribucion_precios_zoom(df_super, super_sel),
+        use_container_width=True,
+    )
     with st.expander("Ver distribucion completa (incluye precios extremos)"):
-        st.plotly_chart(grafico_distribucion_precios_completa(df_super, super_sel),
-                        use_container_width=True)
+        st.plotly_chart(
+            grafico_distribucion_precios_completa(df_super, super_sel),
+            use_container_width=True,
+        )
 
 # ── Resumen por supermercado (sin Mediana) ────────────────────────────
 st.markdown("---")
