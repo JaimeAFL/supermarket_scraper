@@ -573,3 +573,105 @@ class DatabaseManager:
         except Exception as e:
             logger.error("obtener_favoritos: %s", e)
             return pd.DataFrame()
+    
+    # ── Cesta de la compra ─────────────────────────────────────────────
+
+    def obtener_producto_por_id(self, producto_id):
+        """Devuelve dict con datos del producto + ultimo precio.
+
+        Returns:
+            dict o None si no se encuentra.
+        """
+        cur = self._cursor()
+        try:
+            cur.execute("""
+                SELECT p.id, p.nombre, p.supermercado, p.marca,
+                       p.categoria_normalizada, p.formato_normalizado,
+                       p.tipo_producto, p.nombre_normalizado,
+                       (SELECT precio FROM precios WHERE producto_id=p.id
+                        ORDER BY fecha_captura DESC LIMIT 1) AS precio
+                FROM productos p
+                WHERE p.id = ?
+            """, (producto_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+        except Exception as e:
+            logger.error("obtener_producto_por_id: %s", e)
+            return None
+
+    def buscar_alternativa_mas_barata(self, producto_id):
+        """Busca el producto equivalente mas barato en otro supermercado.
+
+        Busca por misma categoria + formato + nombre similar (tipo_producto).
+        Solo devuelve alternativa si es estrictamente mas barata.
+
+        Returns:
+            dict con {id, nombre, supermercado, precio, formato_normalizado}
+            o None si no hay alternativa mas barata.
+        """
+        cur = self._cursor()
+        try:
+            # 1) Obtener datos del producto original
+            producto = self.obtener_producto_por_id(producto_id)
+            if not producto or not producto.get('precio'):
+                return None
+
+            cat = producto.get('categoria_normalizada', '')
+            fmt = producto.get('formato_normalizado', '')
+            super_orig = producto.get('supermercado', '')
+            precio_orig = producto['precio']
+
+            # Si no hay categoria o formato, no se puede buscar
+            if not cat or not fmt:
+                return None
+
+            # 2) Extraer tipo de producto (sin marca) para busqueda
+            tipo = producto.get('tipo_producto', '')
+            if not tipo:
+                tipo = producto.get('nombre_normalizado', '')
+            if not tipo:
+                return None
+
+            # Usar primeras 2-3 palabras del tipo como termino
+            palabras_tipo = tipo.strip().split()[:3]
+            if not palabras_tipo:
+                return None
+
+            # Construir LIKE conditions
+            where_parts = []
+            params = [cat, fmt, super_orig]
+            for p in palabras_tipo:
+                where_parts.append("p.nombre_normalizado LIKE ?")
+                params.append(f"%{p.lower()}%")
+
+            where_nombre = " AND ".join(where_parts)
+
+            # 3) Query: mismo cat+fmt, distinto super, nombre similar
+            sql = f"""
+                SELECT p.id, p.nombre, p.supermercado,
+                       p.formato_normalizado,
+                       (SELECT precio FROM precios
+                        WHERE producto_id = p.id
+                        ORDER BY fecha_captura DESC LIMIT 1
+                       ) AS precio
+                FROM productos p
+                WHERE p.categoria_normalizada = ?
+                  AND p.formato_normalizado = ?
+                  AND p.supermercado != ?
+                  AND {where_nombre}
+                ORDER BY precio ASC
+                LIMIT 1
+            """
+            cur.execute(sql, params)
+            row = cur.fetchone()
+
+            if row:
+                alt = dict(row)
+                if alt.get('precio') and alt['precio'] < precio_orig:
+                    return alt
+
+            return None
+        except Exception as e:
+            logger.error("buscar_alternativa_mas_barata: %s", e)
+            return None
+
