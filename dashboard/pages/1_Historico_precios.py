@@ -12,15 +12,16 @@ _DB_PATH = os.environ.get(
     os.path.join(_PROJECT_ROOT, "database", "supermercados.db"))
 
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 from datetime import datetime
 from database.database_db_manager import DatabaseManager
 from database.init_db import inicializar_base_datos
-from dashboard.utils.charts import grafico_historico_precio
+from dashboard.utils.charts import apex_historico_precio_html
 from dashboard.utils.styles import inyectar_estilos
 from dashboard.utils.components import (
     encabezado, fila_insights, estado_vacio,
-    barra_filtros, paginar_dataframe,
+    barra_filtros,
 )
 
 st.set_page_config(page_title="Historico de precios", page_icon="", layout="wide")
@@ -74,20 +75,19 @@ if filtros['busqueda']:
             precio_min = df_hist['precio'].min()
             precio_max = df_hist['precio'].max()
 
-            # ── Insight cards en vez de st.metric ─────────────────
+            # ── Insight cards ─────────────────────────────────────
             insights = []
 
-            # Precio actual con variación
             if len(df_hist) > 1:
                 variacion = precio_actual - df_hist.iloc[-2]['precio']
                 if variacion > 0:
                     icono_var = "trending_up"
                     tipo_var = "error"
-                    detalle_var = f"+{variacion:.2f} EUR vs anterior"
+                    detalle_var = f"+{variacion:.2f} € vs anterior"
                 elif variacion < 0:
                     icono_var = "trending_down"
                     tipo_var = "success"
-                    detalle_var = f"{variacion:.2f} EUR vs anterior"
+                    detalle_var = f"{variacion:.2f} € vs anterior"
                 else:
                     icono_var = "trending_flat"
                     tipo_var = "neutral"
@@ -100,18 +100,18 @@ if filtros['busqueda']:
             insights.append({
                 "icono": icono_var, "tipo": tipo_var,
                 "titulo": "Precio actual",
-                "valor": f"{precio_actual:.2f} EUR",
+                "valor": f"{precio_actual:.2f} €",
                 "detalle": detalle_var
             })
             insights.append({
                 "icono": "arrow_downward", "tipo": "success",
                 "titulo": "Minimo historico",
-                "valor": f"{precio_min:.2f} EUR",
+                "valor": f"{precio_min:.2f} €",
             })
             insights.append({
                 "icono": "arrow_upward", "tipo": "error",
                 "titulo": "Maximo historico",
-                "valor": f"{precio_max:.2f} EUR",
+                "valor": f"{precio_max:.2f} €",
             })
             insights.append({
                 "icono": "receipt_long", "tipo": "neutral",
@@ -121,13 +121,14 @@ if filtros['busqueda']:
 
             fila_insights(insights)
 
-            # ── Gráfico ───────────────────────────────────────────
+            # ── Grafico ApexCharts ────────────────────────────────
             if len(df_hist) > 1:
-                st.plotly_chart(
-                    grafico_historico_precio(df_hist, nombre_prod),
-                    use_container_width=True)
+                components.html(
+                    apex_historico_precio_html(df_hist, nombre_prod),
+                    height=440, scrolling=False,
+                )
             else:
-                st.markdown(f"**Precio registrado:** {precio_actual:.2f} EUR")
+                st.markdown(f"**Precio registrado:** {precio_actual:.2f} €")
                 try:
                     fecha = datetime.fromisoformat(
                         df_hist.iloc[0]['fecha_captura'])
@@ -143,7 +144,7 @@ if filtros['busqueda']:
             with st.expander("Ver datos en tabla"):
                 df_m = df_hist.copy()
                 df_m['precio'] = df_m['precio'].apply(
-                    lambda x: f"{x:.2f} EUR")
+                    lambda x: f"{x:.2f} €")
                 try:
                     df_m['fecha_captura'] = pd.to_datetime(
                         df_m['fecha_captura']).dt.strftime('%d/%m/%Y %H:%M')
