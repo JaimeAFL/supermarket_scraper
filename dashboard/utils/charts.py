@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Funciones de visualizacion con Plotly para el dashboard."""
+"""Funciones de visualizacion con ApexCharts para el dashboard.
 
-import plotly.express as px
-import plotly.graph_objects as go
-import pandas as pd
-import numpy as np
+Todas las funciones devuelven HTML autocontenido para renderizar
+con streamlit.components.v1.html().
+"""
+
 import json
-import uuid
+import numpy as np
+import pandas as pd
+from string import Template
 
 COLORES_SUPERMERCADO = {
     'Mercadona': '#2ECC71',
@@ -16,527 +18,649 @@ COLORES_SUPERMERCADO = {
     'Eroski':    '#9B59B6',
 }
 
-# Estilo comun para todas las graficas
-_LAYOUT_BASE = dict(
-    template='plotly_white',
-    font=dict(family="Inter, Segoe UI, Roboto, sans-serif", size=13),
-    title_font=dict(size=16, color="#1A1A1A"),
-    hoverlabel=dict(
-        bgcolor="white",
-        font_size=13,
-        font_family="Inter, Segoe UI, Roboto, sans-serif",
-        bordercolor="#E0E4E8",
-    ),
-    margin=dict(l=60, r=40, t=60, b=50),
-)
+_APEX_CDN = "https://cdn.jsdelivr.net/npm/apexcharts@3.49.0/dist/apexcharts.min.js"
+_FONT_CDN = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+_FONT = "Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif"
 
+
+# ═══════════════════════════════════════════════════════════════════════
+# HELPERS
+# ═══════════════════════════════════════════════════════════════════════
 
 def _col_fecha(df):
+    """Detecta la columna de fecha en un DataFrame."""
     for c in ('fecha_captura', 'fecha'):
         if c in df.columns:
             return c
     return None
 
 
-def _get_formato(row):
-    """Obtiene el formato normalizado o el original como fallback."""
-    fmt = row.get('formato_normalizado', '') or row.get('formato', '') or ''
-    return fmt.strip()
-
-
-def grafico_historico_precio(df_historico, nombre_producto=""):
-    if df_historico.empty:
-        return _grafico_vacio("No hay datos de precios disponibles")
-    df = df_historico.copy()
-    cf = _col_fecha(df)
-    if cf is None:
-        return _grafico_vacio("Columna de fecha no encontrada")
-    df[cf] = pd.to_datetime(df[cf])
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=df[cf], y=df['precio'],
-        mode='lines+markers',
-        line=dict(color='#1565C0', width=2.5, shape='spline'),
-        marker=dict(size=8, color='#1565C0',
-                    line=dict(width=2, color='white')),
-        fill='tozeroy',
-        fillcolor='rgba(21, 101, 192, 0.08)',
-        hovertemplate=(
-            '<b>%{x|%d/%m/%Y}</b><br>'
-            'Precio: <b>%{y:.2f} EUR</b>'
-            '<extra></extra>'),
-    ))
-    layout_zoom = {**_LAYOUT_BASE, 'margin': dict(l=70, r=30, t=70, b=85)}
-    fig.update_layout(
-        **layout_zoom,
-        title=f"Evolucion de precio: {nombre_producto}",
-        xaxis_title="Fecha", yaxis_title="Precio (EUR)",
-        yaxis_tickprefix="EUR ", xaxis_tickformat='%d/%m/%Y',
-        hovermode='x unified',
-        height=400,
-    )
-    return fig
-
-
-def grafico_comparativa_supermercados(df_historico_equiv):
-    if df_historico_equiv.empty:
-        return _grafico_vacio("No hay datos para comparar")
-    df = df_historico_equiv.copy()
-    cf = _col_fecha(df)
-    if cf is None:
-        return _grafico_vacio("Columna de fecha no encontrada")
-    df[cf] = pd.to_datetime(df[cf])
-
-    fig = go.Figure()
-    for s in df['supermercado'].unique():
-        df_s = df[df['supermercado'] == s]
-        color = COLORES_SUPERMERCADO.get(s, '#95A5A6')
-        fig.add_trace(go.Scatter(
-            x=df_s[cf], y=df_s['precio'], name=s,
-            mode='lines+markers',
-            line=dict(color=color, width=2.5, shape='spline'),
-            marker=dict(size=7, line=dict(width=1.5, color='white')),
-            hovertemplate=(
-                f'<b>{s}</b><br>'
-                'Precio: <b>%{y:.2f} EUR</b><br>'
-                '%{x|%d/%m/%Y}'
-                '<extra></extra>'),
-        ))
-    layout_full = {**_LAYOUT_BASE, 'margin': dict(l=70, r=30, t=70, b=85)}
-    fig.update_layout(
-        **layout_full,
-        title="Comparativa de precios entre supermercados",
-        xaxis_title="Fecha", yaxis_title="Precio (EUR)",
-        yaxis_tickprefix="EUR ", xaxis_tickformat='%d/%m/%Y',
-        hovermode='x unified',
-        height=420,
-        legend=dict(
-            orientation='h', yanchor='bottom', y=1.02,
-            xanchor='right', x=1,
-            font=dict(size=12),
-        ),
-    )
-    return fig
-
-
-def grafico_barras_precio_actual(df_productos):
-    if df_productos.empty:
-        return _grafico_vacio("No hay datos disponibles")
-    df = df_productos.sort_values('precio')
-    colores = [COLORES_SUPERMERCADO.get(s, '#95A5A6')
-               for s in df['supermercado']]
-    fig = go.Figure(go.Bar(
-        x=df['supermercado'], y=df['precio'], marker_color=colores,
-        text=[f"EUR {p:.2f}" for p in df['precio']],
-        textposition='auto',
-        hovertemplate='%{x}<br>Precio: EUR %{y:.2f}<extra></extra>'))
-    fig.update_layout(
-        **_LAYOUT_BASE,
-        title="Precio actual por supermercado",
-        yaxis_title="Precio (EUR)", yaxis_tickprefix="EUR ",
-    )
-    return fig
-
-
-def grafico_comparador_precios(df, titulo="Comparativa de precios",
-                               usar_precio_unitario=False):
-    """Grafico de barras horizontales con formato normalizado en etiquetas.
-
-    Se mantiene en charts.py para reutilizacion, aunque el comparador
-    ya no lo invoca directamente.
+def _base_css():
+    """CSS compartido por todos los graficos."""
+    return """
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+        font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        background: transparent;
+        color: #1F2937;
+    }
+    .chart-wrapper {
+        background: #FFFFFF;
+        border: 1px solid #E5E7EB;
+        border-radius: 12px;
+        padding: 20px;
+    }
+    .chart-title {
+        font-size: 15px;
+        font-weight: 600;
+        color: #1F2937;
+        margin-bottom: 2px;
+    }
+    .chart-subtitle {
+        font-size: 12px;
+        color: #6B7280;
+        margin-bottom: 12px;
+    }
+    .kpi-row {
+        display: flex;
+        gap: 12px;
+        margin-top: 16px;
+    }
+    .kpi-card {
+        flex: 1;
+        background: #F7F9FC;
+        border: 1px solid #E5E7EB;
+        border-radius: 10px;
+        padding: 12px 16px;
+        text-align: center;
+    }
+    .kpi-label {
+        font-size: 11px;
+        font-weight: 600;
+        color: #6B7280;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .kpi-value {
+        font-size: 18px;
+        font-weight: 700;
+        color: #1F2937;
+        margin-top: 2px;
+    }
     """
-    if df.empty:
-        return _grafico_vacio("No hay datos")
-
-    col_precio = ('precio_unitario'
-                  if usar_precio_unitario
-                  and 'precio_unitario' in df.columns
-                  else 'precio')
-    df = df.dropna(subset=[col_precio]) if usar_precio_unitario else df
-    if df.empty:
-        return _grafico_vacio("No hay datos con precio unitario calculable")
-
-    df = df.sort_values(col_precio)
-    precio_min = df[col_precio].min()
-
-    etiquetas = []
-    for _, row in df.iterrows():
-        fmt = _get_formato(row)
-        precio_val = row[col_precio]
-        if usar_precio_unitario and 'unidad_precio' in row.index:
-            unidad_tag = (f" {row['unidad_precio']}"
-                          if row.get('unidad_precio') else "")
-        else:
-            fmt_tag = f" ({fmt})" if fmt else ""
-            unidad_tag = fmt_tag
-
-        pct = (((precio_val - precio_min) / precio_min * 100)
-               if precio_min > 0 else 0)
-        if pct == 0:
-            etiquetas.append(
-                f"EUR {precio_val:.2f}{unidad_tag} — el mas barato")
-        else:
-            etiquetas.append(
-                f"EUR {precio_val:.2f}{unidad_tag} (+{pct:.0f}%)")
-
-    colores = [COLORES_SUPERMERCADO.get(s, '#95A5A6')
-               for s in df['supermercado']]
-
-    labels = []
-    for _, row in df.iterrows():
-        fmt = _get_formato(row)
-        if fmt:
-            labels.append(
-                f"{row['supermercado']}<br><sub>{fmt}</sub>")
-        else:
-            labels.append(row['supermercado'])
-
-    unidad_eje = ""
-    if usar_precio_unitario and 'unidad_precio' in df.columns:
-        unidad_eje = (df['unidad_precio'].dropna().iloc[0]
-                      if not df['unidad_precio'].dropna().empty
-                      else "EUR")
-    else:
-        unidad_eje = "EUR"
-
-    fig = go.Figure(go.Bar(
-        y=labels, x=df[col_precio], orientation='h',
-        marker_color=colores,
-        text=etiquetas, textposition='outside',
-        hovertemplate='%{y}<br>Precio: EUR %{x:.2f}<extra></extra>'))
-    fig.update_layout(
-        **_LAYOUT_BASE,
-        title=titulo,
-        xaxis_title=f"Precio ({unidad_eje})",
-        xaxis_tickprefix="EUR ",
-        height=max(250, len(df) * 55 + 100),
-        margin=dict(r=280, l=60, t=60, b=50),
-        yaxis=dict(automargin=True),
-    )
-    return fig
 
 
-def grafico_productos_por_supermercado(stats):
+def _html_page(chart_id, options_js, extra_html="", extra_css=""):
+    """Genera una pagina HTML completa con un grafico ApexCharts."""
+    css = _base_css()
+    return f"""<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<script src="{_APEX_CDN}"></script>
+<link href="{_FONT_CDN}" rel="stylesheet">
+<style>{css}{extra_css}</style>
+</head><body>
+<div class="chart-wrapper">
+<div id="{chart_id}"></div>
+{extra_html}
+</div>
+<script>
+var options = {options_js};
+var chart = new ApexCharts(document.querySelector("#{chart_id}"), options);
+chart.render();
+</script>
+</body></html>"""
+
+
+def _html_vacio(mensaje="Sin datos disponibles"):
+    """HTML de estado vacio cuando no hay datos."""
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<link href="{_FONT_CDN}" rel="stylesheet">
+<style>
+body {{
+    font-family: Inter, system-ui, sans-serif;
+    display: flex; justify-content: center; align-items: center;
+    height: 200px; color: #6B7280; font-size: 15px;
+    background: transparent;
+}}
+</style></head><body>{mensaje}</body></html>"""
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# BASE OPTIONS (ApexCharts config compartida)
+# ═══════════════════════════════════════════════════════════════════════
+
+_BASE_CHART_JS = Template("""{
+    fontFamily: '$font',
+    toolbar: { show: false },
+    animations: { enabled: true, easing: 'easeinout', speed: 350 }
+}""")
+
+_BASE_GRID_JS = """{
+    borderColor: '#EEF2F7',
+    strokeDashArray: 4,
+    xaxis: { lines: { show: false } },
+    yaxis: { lines: { show: true } }
+}"""
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 1) PRODUCTOS POR SUPERMERCADO (barras horizontales)
+# ═══════════════════════════════════════════════════════════════════════
+
+def apex_productos_por_supermercado_html(stats):
+    """Grafico de barras horizontales: productos por supermercado."""
     datos = stats.get('productos_por_supermercado', {})
     if not datos:
-        return _grafico_vacio("No hay productos registrados")
+        return _html_vacio("No hay productos registrados")
 
-    # Ordenar de mayor a menor para mejor lectura visual
     datos_ord = dict(sorted(datos.items(), key=lambda x: x[1]))
     supers = list(datos_ord.keys())
     cantidades = list(datos_ord.values())
     colores = [COLORES_SUPERMERCADO.get(s, '#95A5A6') for s in supers]
 
-    fig = go.Figure(go.Bar(
-        y=supers, x=cantidades, orientation='h',
-        marker_color=colores,
-        marker_line_color='rgba(255,255,255,0.6)',
-        marker_line_width=1,
-        text=cantidades,
-        textposition='inside',
-        textfont=dict(color='white', size=14, family="Inter"),
-        hovertemplate='<b>%{y}</b><br>Productos: %{x:,}<extra></extra>',
-    ))
-    fig.update_layout(
-        **_LAYOUT_BASE,
-        title="Productos por supermercado",
-        xaxis_title="Numero de productos",
-        height=300,
-    )
-    return fig
+    cats_json = json.dumps(supers)
+    data_json = json.dumps(cantidades)
+    colors_json = json.dumps(colores)
 
+    t = Template("""{
+        chart: {
+            type: 'bar',
+            height: 280,
+            fontFamily: '$font',
+            toolbar: { show: false },
+            animations: { enabled: true, easing: 'easeinout', speed: 350 }
+        },
+        series: [{ name: 'Productos', data: $data }],
+        plotOptions: {
+            bar: {
+                horizontal: true,
+                borderRadius: 6,
+                barHeight: '60%',
+                distributed: true,
+                dataLabels: { position: 'center' }
+            }
+        },
+        colors: $colors,
+        dataLabels: {
+            enabled: true,
+            formatter: function(val) { return val.toLocaleString(); },
+            style: {
+                fontSize: '13px',
+                fontWeight: 600,
+                colors: ['#FFFFFF']
+            },
+            dropShadow: { enabled: false }
+        },
+        xaxis: {
+            categories: $categories,
+            labels: {
+                style: { fontSize: '12px', colors: '#6B7280' },
+                formatter: function(val) { return val.toLocaleString(); }
+            },
+            axisBorder: { show: false },
+            axisTicks: { show: false }
+        },
+        yaxis: {
+            labels: {
+                style: { fontSize: '13px', fontWeight: 500, colors: '#1F2937' }
+            }
+        },
+        grid: $grid,
+        tooltip: {
+            theme: 'dark',
+            y: { formatter: function(val) { return val.toLocaleString() + ' productos'; } }
+        },
+        legend: { show: false }
+    }""")
 
-
-
-def apex_productos_por_supermercado_html(stats):
-    """HTML embebible con ApexCharts para productos por supermercado."""
-    datos = stats.get('productos_por_supermercado', {})
-    if not datos:
-        return "<div style='padding:12px;color:#78909C'>No hay productos registrados</div>"
-
-    datos_ord = dict(sorted(datos.items(), key=lambda x: x[1], reverse=True))
-    supers = list(datos_ord.keys())
-    cantidades = [int(v) for v in datos_ord.values()]
-    colores = [COLORES_SUPERMERCADO.get(s, '#95A5A6') for s in supers]
-
-    chart_id = f"apex-prod-{uuid.uuid4().hex[:8]}"
-    payload = {
-        "supers": supers,
-        "cantidades": cantidades,
-        "colores": colores,
-        "max_val": max(cantidades) if cantidades else 0,
-        "tick_step": 2000,
-    }
-
-    return f"""
-<div style="font-family:Inter,Segoe UI,Roboto,sans-serif;">
-  <div id="{chart_id}" style="height:340px;"></div>
-</div>
-<script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
-<script>
-  const d = {json.dumps(payload)};
-  const options = {{
-    chart: {{ type: 'bar', height: 340, toolbar: {{ show: false }}, fontFamily: 'Inter, Segoe UI, Roboto, sans-serif' }},
-    title: {{ text: 'productos por supermercado', align: 'left', style: {{ fontSize: '18px', fontWeight: 600, color: '#111827' }} }},
-    series: [{{ name: 'Productos', data: d.cantidades }}],
-    colors: d.colores,
-    plotOptions: {{
-      bar: {{
-        horizontal: true,
-        borderRadius: 3,
-        distributed: true,
-        dataLabels: {{ position: 'right' }}
-      }}
-    }},
-    dataLabels: {{
-      enabled: true,
-      formatter: (v) => new Intl.NumberFormat('es-ES').format(v),
-      style: {{ fontSize: '14px', fontWeight: 600, colors: ['#FFFFFF'] }},
-      textAnchor: 'end',
-      offsetX: -22,
-      dropShadow: {{ enabled: false }}
-    }},
-    xaxis: {{
-      categories: d.supers,
-      min: 0,
-      max: Math.max(d.tick_step, Math.ceil(d.max_val / d.tick_step) * d.tick_step),
-      tickAmount: Math.max(1, Math.ceil(Math.max(d.tick_step, Math.ceil(d.max_val / d.tick_step) * d.tick_step) / d.tick_step)),
-      labels: {{ formatter: (v) => `${{Math.round(v)}}` }}
-    }},
-    yaxis: {{ labels: {{ style: {{ colors: '#4B5563' }} }} }},
-    grid: {{ borderColor: '#EEF2F7', strokeDashArray: 4, padding: {{ left: 0, right: 8 }} }},
-    tooltip: {{
-      theme: 'dark',
-      y: {{ formatter: (v) => `${{new Intl.NumberFormat('es-ES').format(v)}} productos` }}
-    }},
-    legend: {{ show: false }}
-  }};
-  new ApexCharts(document.querySelector('#{chart_id}'), options).render();
-</script>
-"""
-
-def grafico_distribucion_precios_zoom(df, supermercado=""):
-    """Distribucion de precios (percentil 95) estilo dashboard de referencia."""
-    if df.empty or 'precio' not in df.columns:
-        return _grafico_vacio("No hay datos de precios")
-
-    color = COLORES_SUPERMERCADO.get(supermercado, '#95A5A6')
-    precios = df['precio'].dropna().astype(float)
-    if precios.empty:
-        return _grafico_vacio("No hay datos de precios")
-
-    p95 = float(np.percentile(precios, 95))
-    mediana = float(np.median(precios))
-    media = float(np.mean(precios))
-    precios_zoom = precios[precios <= p95]
-
-    fig = go.Figure()
-    fig.add_trace(go.Histogram(
-        x=precios_zoom,
-        xbins=dict(start=0, end=max(5, np.ceil(p95 / 5) * 5), size=5),
-        marker_color=color,
-        opacity=0.85,
-        marker_line_color='rgba(255,255,255,0.55)',
-        marker_line_width=1,
-        hovertemplate=(
-            "Rango (inicio): <b>%{x:.0f} EUR</b><br>"
-            "Productos: <b>%{y}</b><extra></extra>"
-        ),
-    ))
-
-    fig.add_vline(x=mediana, line_dash='dash', line_color='#1A1A1A', line_width=1.6)
-    fig.add_vline(x=media, line_dash='dot', line_color='#607D8B', line_width=1.6)
-
-    fig.add_annotation(
-        x=mediana, y=1.02, xref='x', yref='paper',
-        text=f"Mediana: {mediana:.2f} EUR",
-        showarrow=False,
-        bgcolor='rgba(255,255,255,0.92)',
-        bordercolor='#C4CDD5', borderwidth=1, borderpad=3,
-        font=dict(size=12, color='#2C3E50'),
-    )
-    fig.add_annotation(
-        x=media, y=1.02, xref='x', yref='paper',
-        text=f"Media: {media:.2f} EUR",
-        showarrow=False,
-        bgcolor='rgba(255,255,255,0.92)',
-        bordercolor='#CFD8DC', borderwidth=1, borderpad=3,
-        font=dict(size=12, color='#607D8B'),
+    options_js = t.substitute(
+        font=_FONT,
+        data=data_json,
+        categories=cats_json,
+        colors=colors_json,
+        grid=_BASE_GRID_JS,
     )
 
-    fig.update_layout(
-        **_LAYOUT_BASE,
-        title=f"{supermercado} — 95% de productos",
-        xaxis=dict(dtick=5, tickprefix=''),
-        yaxis=dict(gridcolor='#E8EDF3'),
-        xaxis_title='<b>Precio en €</b>',
-        yaxis_title='<b>Número de productos</b>',
-        height=520,
-        bargap=0.08,
-    )
-    return fig
+    title_html = '<div class="chart-title">Productos por supermercado</div>'
+    return _html_page("chart-super", options_js, extra_html="",
+                      extra_css="").replace(
+        '<div id="chart-super"></div>',
+        f'{title_html}<div id="chart-super"></div>')
 
 
-def grafico_distribucion_precios_completa(df, supermercado=""):
-    """Distribucion completa de precios."""
-    if df.empty or 'precio' not in df.columns:
-        return _grafico_vacio("No hay datos de precios")
-    color = COLORES_SUPERMERCADO.get(supermercado, '#95A5A6')
-    precios = df['precio'].dropna().astype(float)
-    if precios.empty:
-        return _grafico_vacio("No hay datos de precios")
-
-    mediana = float(np.median(precios))
-    media = float(np.mean(precios))
-    max_v = float(precios.max())
-
-    fig = go.Figure()
-    fig.add_trace(go.Histogram(
-        x=precios,
-        xbins=dict(start=0, end=max(5, np.ceil(max_v / 5) * 5), size=5),
-        marker_color=color,
-        opacity=0.85,
-        marker_line_color='rgba(255,255,255,0.55)',
-        marker_line_width=1,
-        hovertemplate="Rango (inicio): <b>%{x:.0f} EUR</b><br>Productos: <b>%{y}</b><extra></extra>",
-    ))
-
-    fig.add_vline(x=mediana, line_dash='dash', line_color='#1A1A1A', line_width=1.6)
-    fig.add_vline(x=media, line_dash='dot', line_color='#607D8B', line_width=1.6)
-    fig.add_annotation(x=mediana, y=1.02, xref='x', yref='paper', text=f"Mediana: {mediana:.2f} EUR", showarrow=False,
-                       bgcolor='rgba(255,255,255,0.92)', bordercolor='#C4CDD5', borderwidth=1, borderpad=3,
-                       font=dict(size=12, color='#2C3E50'))
-    fig.add_annotation(x=media, y=1.02, xref='x', yref='paper', text=f"Media: {media:.2f} EUR", showarrow=False,
-                       bgcolor='rgba(255,255,255,0.92)', bordercolor='#CFD8DC', borderwidth=1, borderpad=3,
-                       font=dict(size=12, color='#607D8B'))
-
-    fig.update_layout(
-        **_LAYOUT_BASE,
-        title=f"{supermercado} — Distribución completa",
-        xaxis=dict(dtick=5, tickprefix=''),
-        xaxis_title='<b>Precio en €</b>',
-        yaxis_title='<b>Número de productos</b>',
-        height=520,
-        bargap=0.08,
-    )
-    return fig
-
-
-def grafico_distribucion_precios(df, supermercado=""):
-    return grafico_distribucion_precios_zoom(df, supermercado)
-
-
+# ═══════════════════════════════════════════════════════════════════════
+# 2) DISTRIBUCION DE PRECIOS (histograma)
+# ═══════════════════════════════════════════════════════════════════════
 
 def apex_distribucion_precios_html(df, supermercado="", completa=False):
-    """Devuelve HTML embebible con ApexCharts para distribucion de precios."""
+    """Histograma de distribucion de precios.
+
+    Args:
+        df: DataFrame con columna 'precio'
+        supermercado: nombre del supermercado para color y titulo
+        completa: False=vista 95%, True=todos los precios (log Y)
+    """
     if df.empty or 'precio' not in df.columns:
-        return "<div style='padding:12px;color:#78909C'>No hay datos de precios</div>"
+        return _html_vacio("No hay datos de precios")
 
-    precios = df['precio'].dropna().astype(float)
+    color = COLORES_SUPERMERCADO.get(supermercado, '#2F80ED')
+    precios = df['precio'].dropna()
     if precios.empty:
-        return "<div style='padding:12px;color:#78909C'>No hay datos de precios</div>"
+        return _html_vacio("No hay datos de precios")
 
-    color = COLORES_SUPERMERCADO.get(supermercado, '#95A5A6')
-    mediana = float(np.median(precios))
-    media = float(np.mean(precios))
+    total = len(precios)
 
     if completa:
         precios_plot = precios
-        subtitulo = f"{supermercado} — Distribucion completa"
+        max_val = int(np.ceil(precios.max()))
+        # Bins adaptativos para vista completa
+        if max_val <= 100:
+            bin_width = 1
+        elif max_val <= 250:
+            bin_width = 2
+        else:
+            bin_width = 5
+        titulo = f"{supermercado} — Todos los precios"
+        subtitulo = f"{total:,} productos · escala logaritmica"
     else:
         p95 = float(np.percentile(precios, 95))
         precios_plot = precios[precios <= p95]
-        subtitulo = f"{supermercado} — 95% de productos (hasta {p95:.0f} EUR)"
+        max_val = int(np.ceil(p95))
+        bin_width = 1
+        titulo = f"{supermercado} — 95% de productos (hasta {max_val} €)"
+        subtitulo = f"{len(precios_plot):,} de {total:,} productos"
 
-    max_val = float(precios_plot.max()) if not precios_plot.empty else float(precios.max())
-    tick_max = int(max(5, np.ceil(max_val / 5.0) * 5))
-    bins = np.arange(0, tick_max + 5, 5)
+    en_rango = len(precios_plot)
+    mediana = float(np.median(precios_plot))
+    media = float(np.mean(precios_plot))
+    p25 = float(np.percentile(precios_plot, 25))
+    p75 = float(np.percentile(precios_plot, 75))
+
+    # Calcular bins
+    bins = np.arange(0, max_val + bin_width, bin_width)
     counts, edges = np.histogram(precios_plot, bins=bins)
-    categorias = [str(int(e)) for e in edges[:-1]]
 
-    def _snap(v):
-        return str(int(round(v / 5.0) * 5))
+    # Categorias: "0", "1", "2", ... (inicio de cada bin)
+    categories = [str(int(e)) for e in edges[:-1]]
+    data = [int(x) for x in counts]
 
-    mediana_tick = _snap(mediana)
-    media_tick = _snap(media)
+    # Para log scale: reemplazar 0 con null
+    if completa:
+        data_js = json.dumps([x if x > 0 else None for x in data])
+    else:
+        data_js = json.dumps(data)
 
-    chart_id = f"apex-dist-{uuid.uuid4().hex[:8]}"
-    payload = {
-        "categories": categorias,
-        "counts": [int(c) for c in counts.tolist()],
-        "color": color,
-        "mediana_tick": mediana_tick,
-        "media_tick": media_tick,
-    }
+    cats_json = json.dumps(categories)
 
-    return f"""
-<div style="font-family:Inter,Segoe UI,Roboto,sans-serif;">
-  <div style="font-weight:600;font-size:18px;margin:0 0 6px 0;">{subtitulo}</div>
+    # Determinar intervalo de etiquetas en eje X
+    label_interval = 5 if bin_width <= 2 else 10
 
-  <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:8px 0 12px 0;">
-    <div style="border:1px solid #D7DEE6;background:#FFFFFF;border-radius:12px;padding:12px 14px;">
-      <div style="font-size:12px;letter-spacing:.02em;color:#5A6C7D;text-transform:uppercase;font-weight:600;">Mediana</div>
-      <div style="font-size:34px;line-height:1.1;font-weight:700;color:#111827;margin-top:4px;">{mediana:.2f} €</div>
-    </div>
-    <div style="border:1px solid #D7DEE6;background:#FFFFFF;border-radius:12px;padding:12px 14px;">
-      <div style="font-size:12px;letter-spacing:.02em;color:#5A6C7D;text-transform:uppercase;font-weight:600;">Media</div>
-      <div style="font-size:34px;line-height:1.1;font-weight:700;color:#111827;margin-top:4px;">{media:.2f} €</div>
-    </div>
-  </div>
+    # Annotation positions (bin mas cercano)
+    mediana_bin = str(int(round(mediana / bin_width) * bin_width))
+    media_bin = str(int(round(media / bin_width) * bin_width))
 
-  <div style="display:flex;justify-content:flex-end;margin:0 0 8px 0;">
-    <div style="border:1px solid #CFD8DC;background:rgba(255,255,255,.88);padding:6px 10px;border-radius:6px;color:#5A6C7D;font-size:12px;">
-      <span style='color:{color};font-weight:700'>{len(precios_plot):,}</span> de <span style='color:{color};font-weight:700'>{len(precios):,}</span> productos
-    </div>
-  </div>
+    # Eje Y config
+    if completa:
+        yaxis_js = """{
+            logarithmic: true,
+            min: 1,
+            title: { text: 'Productos (log)', style: { fontSize: '12px', color: '#6B7280' } },
+            labels: { style: { fontSize: '11px', colors: '#6B7280' } }
+        }"""
+    else:
+        yaxis_js = """{
+            title: { text: 'Productos', style: { fontSize: '12px', color: '#6B7280' } },
+            labels: { style: { fontSize: '11px', colors: '#6B7280' } }
+        }"""
 
-  <div id="{chart_id}" style="height:420px;"></div>
-</div>
-<script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
-<script>
-  const d = {json.dumps(payload)};
-  const options = {{
-    chart: {{ type: 'bar', height: 420, toolbar: {{ show: false }}, fontFamily: 'Inter, Segoe UI, Roboto, sans-serif' }},
-    series: [{{ name: 'Productos', data: d.counts }}],
-    colors: [d.color],
-    plotOptions: {{ bar: {{ borderRadius: 3, columnWidth: '92%' }} }},
-    dataLabels: {{ enabled: false }},
-    xaxis: {{
-      categories: d.categories,
-      tickAmount: Math.max(2, d.categories.length-1),
-      labels: {{ formatter: (v) => `${{v}}` }},
-      title: {{ text: 'Precio en €', style: {{ fontSize: '20px', fontWeight: 700, color: '#111827' }} }}
-    }},
-    yaxis: {{
-      title: {{ text: 'Numero de productos', style: {{ fontSize: '20px', fontWeight: 700, color: '#111827' }} }}
-    }},
-    grid: {{ borderColor: '#EEF2F7', strokeDashArray: 4, padding: {{ left: 0, right: 8 }} }},
-    tooltip: {{
-      theme: 'dark',
-      x: {{ formatter: (v) => `${{v}} - ${{Number(v)+5}}` }},
-      y: {{ formatter: (v) => `${{v}} productos` }}
-    }},
-    annotations: {{
-      xaxis: [
-        {{ x: d.mediana_tick, borderColor: '#1A1A1A', strokeDashArray: 5, label: {{ text: 'Mediana', orientation: 'horizontal', style: {{ background: '#FFFFFF', color: '#1A1A1A', borderColor: '#C4CDD5' }} }} }},
-        {{ x: d.media_tick, borderColor: '#607D8B', strokeDashArray: 2, label: {{ text: 'Media', orientation: 'horizontal', style: {{ background: '#FFFFFF', color: '#546E7A', borderColor: '#CFD8DC' }} }} }}
-      ]
-    }}
-  }};
-  new ApexCharts(document.querySelector('#{chart_id}'), options).render();
-</script>
-"""
+    t = Template("""{
+        chart: {
+            type: 'bar',
+            height: $height,
+            fontFamily: '$font',
+            toolbar: { show: false },
+            animations: { enabled: true, easing: 'easeinout', speed: 300 }
+        },
+        series: [{ name: '$supermercado', data: $data }],
+        plotOptions: {
+            bar: {
+                borderRadius: 1,
+                columnWidth: '95%'
+            }
+        },
+        colors: ['$color'],
+        fill: { opacity: 0.65 },
+        dataLabels: { enabled: false },
+        xaxis: {
+            categories: $categories,
+            title: {
+                text: 'Precio (€)',
+                style: { fontSize: '12px', color: '#6B7280', fontWeight: 500 }
+            },
+            labels: {
+                rotate: 0,
+                hideOverlappingLabels: true,
+                style: { fontSize: '11px', colors: '#6B7280' },
+                formatter: function(val) {
+                    var n = parseInt(val);
+                    return (n % $label_interval === 0) ? n : '';
+                }
+            },
+            axisBorder: { color: '#E5E7EB' },
+            axisTicks: { show: false },
+            crosshairs: { show: false }
+        },
+        yaxis: $yaxis,
+        grid: {
+            borderColor: '#EEF2F7',
+            strokeDashArray: 4,
+            xaxis: { lines: { show: false } },
+            yaxis: { lines: { show: true } }
+        },
+        tooltip: {
+            theme: 'dark',
+            custom: function(opts) {
+                var count = opts.series[opts.seriesIndex][opts.dataPointIndex];
+                var cat = opts.w.globals.labels[opts.dataPointIndex];
+                var start = parseInt(cat);
+                var end = start + $bin_width;
+                if (count === null || count === undefined) count = 0;
+                return '<div style="padding:8px 14px;font-size:13px;line-height:1.6">' +
+                       '<div style="font-weight:600">' + start + ' – ' + end + ' €</div>' +
+                       '<div style="opacity:0.8">' + count.toLocaleString() + ' productos</div></div>';
+            }
+        },
+        annotations: {
+            xaxis: [
+                {
+                    x: '$mediana_bin',
+                    borderColor: '#1F2937',
+                    strokeDashArray: 0,
+                    label: {
+                        text: 'Mediana',
+                        orientation: 'vertical',
+                        borderWidth: 0,
+                        style: {
+                            background: '#1F2937',
+                            color: '#fff',
+                            fontSize: '11px',
+                            fontWeight: 600,
+                            padding: { left: 6, right: 6, top: 3, bottom: 3 }
+                        }
+                    }
+                },
+                {
+                    x: '$media_bin',
+                    borderColor: '#6B7280',
+                    strokeDashArray: 4,
+                    label: {
+                        text: 'Media',
+                        orientation: 'vertical',
+                        borderWidth: 0,
+                        style: {
+                            background: '#6B7280',
+                            color: '#fff',
+                            fontSize: '11px',
+                            fontWeight: 600,
+                            padding: { left: 6, right: 6, top: 3, bottom: 3 }
+                        }
+                    }
+                }
+            ]
+        },
+        legend: { show: false }
+    }""")
 
-def _grafico_vacio(mensaje="Sin datos disponibles"):
-    fig = go.Figure()
-    fig.add_annotation(
-        text=mensaje, xref="paper", yref="paper", x=0.5, y=0.5,
-        showarrow=False,
-        font=dict(size=16, color='#78909C', family="Inter"))
-    fig.update_layout(
-        xaxis=dict(visible=False), yaxis=dict(visible=False),
-        template='plotly_white', height=300,
-        margin=dict(l=40, r=40, t=40, b=40),
+    options_js = t.substitute(
+        height=380,
+        font=_FONT,
+        supermercado=supermercado,
+        data=data_js,
+        categories=cats_json,
+        color=color,
+        label_interval=label_interval,
+        bin_width=bin_width,
+        yaxis=yaxis_js,
+        mediana_bin=mediana_bin,
+        media_bin=media_bin,
     )
-    return fig
+
+    # KPI cards debajo del grafico
+    kpi_html = f"""
+    <div class="kpi-row">
+        <div class="kpi-card">
+            <div class="kpi-label">Mediana</div>
+            <div class="kpi-value">{mediana:.2f} €</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Media</div>
+            <div class="kpi-value">{media:.2f} €</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Q1 / Q3</div>
+            <div class="kpi-value">{p25:.2f} / {p75:.2f} €</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Cobertura</div>
+            <div class="kpi-value">{en_rango:,} de {total:,}</div>
+        </div>
+    </div>"""
+
+    title_html = (
+        f'<div class="chart-title">{titulo}</div>'
+        f'<div class="chart-subtitle">{subtitulo}</div>'
+    )
+
+    return _html_page(
+        "chart-dist", options_js, extra_html=kpi_html
+    ).replace(
+        '<div id="chart-dist"></div>',
+        f'{title_html}<div id="chart-dist"></div>')
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 3) HISTORICO DE PRECIO (area chart)
+# ═══════════════════════════════════════════════════════════════════════
+
+def apex_historico_precio_html(df_historico, nombre_producto=""):
+    """Grafico de evolucion temporal de precio de un producto."""
+    if df_historico.empty:
+        return _html_vacio("No hay datos de precios disponibles")
+
+    df = df_historico.copy()
+    cf = _col_fecha(df)
+    if cf is None:
+        return _html_vacio("Columna de fecha no encontrada")
+
+    df[cf] = pd.to_datetime(df[cf])
+    df = df.sort_values(cf)
+
+    # Convertir a timestamps ms + precios
+    timestamps = (df[cf].astype(np.int64) // 10**6).tolist()
+    precios = [round(float(p), 2) for p in df['precio'].tolist()]
+    data_points = json.dumps(list(zip(timestamps, precios)))
+
+    t = Template("""{
+        chart: {
+            type: 'area',
+            height: 360,
+            fontFamily: '$font',
+            toolbar: { show: false },
+            animations: { enabled: true, easing: 'easeinout', speed: 400 },
+            zoom: { enabled: false }
+        },
+        series: [{
+            name: 'Precio',
+            data: $data
+        }],
+        stroke: {
+            curve: 'smooth',
+            width: 2.5,
+            colors: ['#2F80ED']
+        },
+        fill: {
+            type: 'gradient',
+            gradient: {
+                shadeIntensity: 1,
+                opacityFrom: 0.25,
+                opacityTo: 0.05,
+                stops: [0, 100]
+            }
+        },
+        colors: ['#2F80ED'],
+        markers: {
+            size: 5,
+            colors: ['#2F80ED'],
+            strokeColors: '#fff',
+            strokeWidth: 2,
+            hover: { sizeOffset: 3 }
+        },
+        xaxis: {
+            type: 'datetime',
+            labels: {
+                format: 'dd/MM/yy',
+                style: { fontSize: '11px', colors: '#6B7280' }
+            },
+            axisBorder: { color: '#E5E7EB' },
+            axisTicks: { color: '#E5E7EB' }
+        },
+        yaxis: {
+            title: {
+                text: 'Precio (€)',
+                style: { fontSize: '12px', color: '#6B7280', fontWeight: 500 }
+            },
+            labels: {
+                style: { fontSize: '11px', colors: '#6B7280' },
+                formatter: function(val) { return val.toFixed(2) + ' €'; }
+            }
+        },
+        grid: {
+            borderColor: '#EEF2F7',
+            strokeDashArray: 4,
+            xaxis: { lines: { show: false } },
+            yaxis: { lines: { show: true } }
+        },
+        tooltip: {
+            theme: 'dark',
+            x: { format: 'dd/MM/yyyy' },
+            y: { formatter: function(val) { return val.toFixed(2) + ' €'; } }
+        }
+    }""")
+
+    options_js = t.substitute(
+        font=_FONT,
+        data=data_points,
+    )
+
+    titulo = f"Evolucion de precio: {nombre_producto}" if nombre_producto else "Evolucion de precio"
+    title_html = f'<div class="chart-title">{titulo}</div>'
+
+    return _html_page("chart-hist", options_js).replace(
+        '<div id="chart-hist"></div>',
+        f'{title_html}<div id="chart-hist"></div>')
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 4) COMPARATIVA SUPERMERCADOS (multi-line)
+# ═══════════════════════════════════════════════════════════════════════
+
+def apex_comparativa_supermercados_html(df_historico_equiv):
+    """Grafico de lineas comparando precios entre supermercados."""
+    if df_historico_equiv.empty:
+        return _html_vacio("No hay datos para comparar")
+
+    df = df_historico_equiv.copy()
+    cf = _col_fecha(df)
+    if cf is None:
+        return _html_vacio("Columna de fecha no encontrada")
+
+    df[cf] = pd.to_datetime(df[cf])
+
+    series_list = []
+    colors_list = []
+    for s in df['supermercado'].unique():
+        df_s = df[df['supermercado'] == s].sort_values(cf)
+        timestamps = (df_s[cf].astype(np.int64) // 10**6).tolist()
+        precios = [round(float(p), 2) for p in df_s['precio'].tolist()]
+        data_points = list(zip(timestamps, precios))
+        series_list.append({"name": s, "data": data_points})
+        colors_list.append(COLORES_SUPERMERCADO.get(s, '#95A5A6'))
+
+    series_json = json.dumps(series_list)
+    colors_json = json.dumps(colors_list)
+
+    t = Template("""{
+        chart: {
+            type: 'line',
+            height: 380,
+            fontFamily: '$font',
+            toolbar: { show: false },
+            animations: { enabled: true, easing: 'easeinout', speed: 400 },
+            zoom: { enabled: false }
+        },
+        series: $series,
+        stroke: {
+            curve: 'smooth',
+            width: 2.5
+        },
+        colors: $colors,
+        markers: {
+            size: 5,
+            strokeColors: '#fff',
+            strokeWidth: 2,
+            hover: { sizeOffset: 3 }
+        },
+        xaxis: {
+            type: 'datetime',
+            labels: {
+                format: 'dd/MM/yy',
+                style: { fontSize: '11px', colors: '#6B7280' }
+            },
+            axisBorder: { color: '#E5E7EB' },
+            axisTicks: { color: '#E5E7EB' }
+        },
+        yaxis: {
+            title: {
+                text: 'Precio (€)',
+                style: { fontSize: '12px', color: '#6B7280', fontWeight: 500 }
+            },
+            labels: {
+                style: { fontSize: '11px', colors: '#6B7280' },
+                formatter: function(val) { return val.toFixed(2) + ' €'; }
+            }
+        },
+        grid: {
+            borderColor: '#EEF2F7',
+            strokeDashArray: 4,
+            xaxis: { lines: { show: false } },
+            yaxis: { lines: { show: true } }
+        },
+        tooltip: {
+            theme: 'dark',
+            x: { format: 'dd/MM/yyyy' },
+            y: { formatter: function(val) { return val.toFixed(2) + ' €'; } }
+        },
+        legend: {
+            position: 'top',
+            horizontalAlign: 'left',
+            fontSize: '12px',
+            fontWeight: 500,
+            labels: { colors: '#4B5563' },
+            markers: { radius: 4 },
+            itemMargin: { horizontal: 12 }
+        }
+    }""")
+
+    options_js = t.substitute(
+        font=_FONT,
+        series=series_json,
+        colors=colors_json,
+    )
+
+    title_html = '<div class="chart-title">Comparativa de precios entre supermercados</div>'
+
+    return _html_page("chart-comp", options_js).replace(
+        '<div id="chart-comp"></div>',
+        f'{title_html}<div id="chart-comp"></div>')

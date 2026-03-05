@@ -11,13 +11,13 @@ os.environ.setdefault("SUPERMARKET_DB_PATH", _DB_PATH)
 
 import streamlit as st
 import streamlit.components.v1 as components
+import streamlit.components.v1 as components
 import pandas as pd
 from database.database_db_manager import DatabaseManager
 from database.init_db import inicializar_base_datos
 from dashboard.utils.charts import (
     apex_productos_por_supermercado_html,
-    grafico_distribucion_precios_zoom,
-    grafico_distribucion_precios_completa,
+    apex_distribucion_precios_html,
 )
 from dashboard.utils.styles import inyectar_estilos
 from dashboard.utils.components import (
@@ -28,10 +28,7 @@ from dashboard.utils.components import (
 st.set_page_config(page_title="Supermarket Price Tracker", page_icon="",
                    layout="wide", initial_sidebar_state="expanded")
 
-# ── Estilos globales (una sola llamada) ───────────────────────────────
 inyectar_estilos()
-
-# ── Sidebar ───────────────────────────────────────────────────────────
 sidebar_branding(_DB_PATH)
 
 @st.cache_resource
@@ -67,14 +64,13 @@ if dias <= 1:
 
 st.markdown("---")
 
-# ── Productos por supermercado ────────────────────────────────────────
+# ── Productos por supermercado (ApexCharts) ───────────────────────────
 components.html(
     apex_productos_por_supermercado_html(stats),
-    height=360,
-    scrolling=False,
+    height=360, scrolling=False,
 )
 
-# ── Distribucion de precios ──────────────────────────────────────────
+# ── Distribucion de precios (ApexCharts) ──────────────────────────────
 st.markdown("---")
 encabezado("Distribucion de precios", "bar_chart", nivel=3)
 
@@ -89,17 +85,17 @@ if supers_disponibles:
     with st.spinner("Cargando datos..."):
         df_super = _cargar_productos_super(db, super_sel)
 
-    st.plotly_chart(
-        grafico_distribucion_precios_zoom(df_super, super_sel),
-        use_container_width=True,
+    components.html(
+        apex_distribucion_precios_html(df_super, super_sel, completa=False),
+        height=560, scrolling=False,
     )
     with st.expander("Ver distribucion completa (incluye precios extremos)"):
-        st.plotly_chart(
-            grafico_distribucion_precios_completa(df_super, super_sel),
-            use_container_width=True,
+        components.html(
+            apex_distribucion_precios_html(df_super, super_sel, completa=True),
+            height=560, scrolling=False,
         )
 
-# ── Resumen por supermercado (sin Mediana) ────────────────────────────
+# ── Resumen por supermercado (con Mediana, € en vez de EUR) ──────────
 st.markdown("---")
 encabezado("Resumen por supermercado", "table_chart", nivel=3)
 
@@ -111,9 +107,10 @@ if stats.get('productos_por_supermercado'):
             datos_tabla.append({
                 'Supermercado': supermercado,
                 'Productos': total,
-                'Precio medio': f"{df_s['precio'].mean():.2f} EUR",
-                'Minimo': f"{df_s['precio'].min():.2f} EUR",
-                'Maximo': f"{df_s['precio'].max():.2f} EUR",
+                'Precio medio': f"{df_s['precio'].mean():.2f} €",
+                'Mediana': f"{df_s['precio'].median():.2f} €",
+                'Minimo': f"{df_s['precio'].min():.2f} €",
+                'Maximo': f"{df_s['precio'].max():.2f} €",
             })
     if datos_tabla:
         st.dataframe(pd.DataFrame(datos_tabla),
@@ -138,7 +135,6 @@ if filtros['busqueda']:
         )
 
     if not df_res.empty:
-        # Filtro de categoria
         if filtros['categoria'] and 'categoria_normalizada' in df_res.columns:
             df_res = df_res[df_res['categoria_normalizada'] == filtros['categoria']]
 
@@ -156,7 +152,6 @@ if filtros['busqueda']:
 
             if not df_tipo.empty:
                 st.caption(f"{len(df_tipo)} resultados directos")
-                # Render directo sin paginacion
                 st.dataframe(df_tipo[cols_mostrar],
                              use_container_width=True, hide_index=True)
 

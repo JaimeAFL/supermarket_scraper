@@ -15,13 +15,7 @@ from dashboard.utils.styles import COLORES_SUPERMERCADO
 # ═══════════════════════════════════════════════════════════════════════
 
 def encabezado(texto, icono, nivel=2):
-    """Renderiza un encabezado con Material Icon.
-
-    Args:
-        texto: texto del encabezado
-        icono: nombre del Material Icon (ej: 'trending_up')
-        nivel: 2 para h2, 3 para h3
-    """
+    """Renderiza un encabezado con Material Icon."""
     tag = f"h{nivel}"
     st.markdown(
         f'<div class="icon-header">'
@@ -31,17 +25,16 @@ def encabezado(texto, icono, nivel=2):
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# TARJETAS DE MÉTRICAS
+# TARJETAS DE METRICAS
 # ═══════════════════════════════════════════════════════════════════════
 
 def fila_metricas(metricas):
-    """Renderiza una fila de tarjetas de métricas.
+    """Renderiza una fila de tarjetas de metricas.
 
     Args:
         metricas: lista de tuplas (icono, valor, etiqueta)
-                  Ej: [("inventory_2", "4.300", "Productos"), ...]
     """
-    html = '<div class="metric-row" role="group" aria-label="Métricas">'
+    html = '<div class="metric-row" role="group" aria-label="Metricas">'
     for icono, valor, etiqueta in metricas:
         html += (
             f'<div class="metric-card">'
@@ -57,19 +50,15 @@ def fila_metricas(metricas):
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# TARJETAS DE INSIGHT (decisión rápida)
+# TARJETAS DE INSIGHT (decision rapida)
 # ═══════════════════════════════════════════════════════════════════════
 
 def fila_insights(insights):
-    """Renderiza tarjetas de insight para decisión rápida.
+    """Renderiza tarjetas de insight para decision rapida.
 
     Args:
         insights: lista de dicts con claves:
-            - icono: nombre Material Icon
-            - tipo: 'success'|'error'|'warning'|'neutral'|'primary'
-            - titulo: texto pequeño superior
-            - valor: texto grande principal
-            - detalle: texto pequeño inferior (opcional)
+            icono, tipo, titulo, valor, detalle (opcional)
     """
     html = '<div class="insight-row" role="group" aria-label="Insights">'
     for ins in insights:
@@ -92,10 +81,7 @@ def fila_insights(insights):
 
 
 def insight_card(icono, tipo, titulo, valor, detalle="", compacto=False):
-    """Renderiza una tarjeta de insight individual.
-
-    Similar a fila_insights pero para usar una sola tarjeta.
-    """
+    """Renderiza una tarjeta de insight individual."""
     clase_compact = " compact" if compacto else ""
     detalle_html = (
         f'<div class="insight-detail">{detalle}</div>' if detalle else ""
@@ -117,16 +103,7 @@ def insight_card(icono, tipo, titulo, valor, detalle="", compacto=False):
 # ═══════════════════════════════════════════════════════════════════════
 
 def badge_html(texto, tipo="neutral", icono=None):
-    """Genera HTML de un badge (para incrustar en otras estructuras).
-
-    Args:
-        texto: texto del badge
-        tipo: 'success'|'error'|'warning'|'neutral'|'primary'
-        icono: nombre Material Icon opcional
-
-    Returns:
-        str: HTML del badge
-    """
+    """Genera HTML de un badge."""
     icono_html = (
         f'<span class="material-icons-outlined" aria-hidden="true">{icono}</span>'
         if icono else ""
@@ -139,22 +116,16 @@ def badge_html(texto, tipo="neutral", icono=None):
 
 
 def badge(texto, tipo="neutral", icono=None):
-    """Renderiza un badge directamente con st.markdown."""
+    """Renderiza un badge directamente."""
     st.markdown(badge_html(texto, tipo, icono), unsafe_allow_html=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# ESTADOS UX (vacío, sin resultados, error)
+# ESTADOS UX (vacio, sin resultados, error)
 # ═══════════════════════════════════════════════════════════════════════
 
 def estado_vacio(icono, titulo, detalle=""):
-    """Renderiza un estado vacío visual.
-
-    Args:
-        icono: nombre Material Icon (ej: 'search_off', 'inbox')
-        titulo: mensaje principal
-        detalle: mensaje secundario opcional
-    """
+    """Renderiza un estado vacio visual."""
     detalle_html = (
         f'<div class="estado-detalle">{detalle}</div>' if detalle else ""
     )
@@ -168,52 +139,38 @@ def estado_vacio(icono, titulo, detalle=""):
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# PAGINACIÓN
+# PAGINACION
 # ═══════════════════════════════════════════════════════════════════════
 
 def paginar_dataframe(df, clave_pagina, filas_por_pagina=20):
-    """Pagina un DataFrame con controles de navegación Streamlit.
-
-    Args:
-        df: DataFrame completo a paginar
-        clave_pagina: clave única para session_state (ej: 'pag_home')
-        filas_por_pagina: filas por página (default 20)
-
-    Returns:
-        DataFrame: slice de la página actual
-    """
+    """Pagina un DataFrame con controles de navegacion Streamlit."""
     total_filas = len(df)
     if total_filas == 0:
         return df
 
     total_paginas = math.ceil(total_filas / filas_por_pagina)
 
-    # Inicializar estado
     if clave_pagina not in st.session_state:
         st.session_state[clave_pagina] = 1
 
     pagina_actual = st.session_state[clave_pagina]
 
-    # Clamp por si los filtros redujeron las páginas
     if pagina_actual > total_paginas:
         pagina_actual = 1
         st.session_state[clave_pagina] = 1
 
-    # Calcular slice
     inicio = (pagina_actual - 1) * filas_por_pagina
     fin = min(inicio + filas_por_pagina, total_filas)
     df_pagina = df.iloc[inicio:fin]
 
-    # Info de rango
     st.markdown(
         f'<div class="pagination-info">'
         f'<span>Mostrando <span class="page-range">{inicio + 1}–{fin}</span>'
         f' de <span class="page-range">{total_filas}</span> resultados</span>'
-        f'<span>Página {pagina_actual} de {total_paginas}</span>'
+        f'<span>Pagina {pagina_actual} de {total_paginas}</span>'
         f'</div>',
         unsafe_allow_html=True)
 
-    # Controles de navegación (solo si > 1 página)
     if total_paginas > 1:
         col_prev, col_paginas, col_next = st.columns([1, 3, 1])
 
@@ -227,9 +184,8 @@ def paginar_dataframe(df, clave_pagina, filas_por_pagina=20):
                 st.rerun()
 
         with col_paginas:
-            # Selector de página para saltar directamente
             nueva_pagina = st.select_slider(
-                "Página", options=list(range(1, total_paginas + 1)),
+                "Pagina", options=list(range(1, total_paginas + 1)),
                 value=pagina_actual, key=f"{clave_pagina}_slider",
                 label_visibility="collapsed"
             )
@@ -250,7 +206,7 @@ def paginar_dataframe(df, clave_pagina, filas_por_pagina=20):
 
 
 def reset_paginacion(clave_pagina):
-    """Resetea la paginación a la primera página."""
+    """Resetea la paginacion a la primera pagina."""
     if clave_pagina in st.session_state:
         st.session_state[clave_pagina] = 1
 
@@ -262,18 +218,7 @@ def reset_paginacion(clave_pagina):
 def barra_filtros(db, clave_vista, mostrar_busqueda=True, mostrar_super=True,
                   mostrar_categoria=True, mostrar_precio=False,
                   mostrar_orden=False, opciones_orden=None):
-    """Renderiza una barra de filtros estandarizada.
-
-    Args:
-        db: instancia de DatabaseManager
-        clave_vista: prefijo para claves de session_state (ej: 'home', 'comp')
-        mostrar_*: flags para activar/desactivar cada filtro
-        opciones_orden: lista de opciones de ordenación
-
-    Returns:
-        dict con claves: busqueda, supermercado, categoria, precio_min,
-                         precio_max, orden
-    """
+    """Renderiza una barra de filtros estandarizada."""
     filtros = {
         'busqueda': '',
         'supermercado': None,
@@ -283,7 +228,6 @@ def barra_filtros(db, clave_vista, mostrar_busqueda=True, mostrar_super=True,
         'orden': None,
     }
 
-    # Calcular cuántas columnas necesitamos
     num_cols = sum([
         mostrar_busqueda, mostrar_super, mostrar_categoria,
         mostrar_precio, mostrar_orden
@@ -292,7 +236,6 @@ def barra_filtros(db, clave_vista, mostrar_busqueda=True, mostrar_super=True,
     if num_cols == 0:
         return filtros
 
-    # Pesos de columnas según qué filtros hay
     pesos = []
     if mostrar_busqueda:
         pesos.append(3)
@@ -336,7 +279,7 @@ def barra_filtros(db, clave_vista, mostrar_busqueda=True, mostrar_super=True,
     if mostrar_precio:
         with columnas[idx]:
             rango = st.slider(
-                "Precio (EUR):", 0.0, 100.0, (0.0, 100.0),
+                "Precio (€):", 0.0, 100.0, (0.0, 100.0),
                 key=f"{clave_vista}_precio")
             filtros['precio_min'] = rango[0]
             filtros['precio_max'] = rango[1]
@@ -354,7 +297,7 @@ def barra_filtros(db, clave_vista, mostrar_busqueda=True, mostrar_super=True,
 
 
 def aplicar_orden(df, orden, col_precio='precio'):
-    """Aplica ordenación a un DataFrame según la selección del usuario."""
+    """Aplica ordenacion a un DataFrame segun la seleccion del usuario."""
     if not orden or df.empty:
         return df
     if orden == "Precio menor":
@@ -374,22 +317,10 @@ def aplicar_orden(df, orden, col_precio='precio'):
 def tarjeta_producto_html(nombre, supermercado, precio, formato="",
                           precio_unitario=None, unidad_precio="",
                           badges_extra=None):
-    """Genera HTML de una tarjeta de producto.
-
-    Args:
-        nombre: nombre del producto
-        supermercado: nombre del supermercado
-        precio: precio absoluto
-        formato: formato normalizado
-        precio_unitario: precio por unidad (opcional)
-        unidad_precio: unidad del precio unitario (€/L, €/kg)
-        badges_extra: lista de tuplas (texto, tipo) para badges adicionales
-
-    Returns:
-        str: HTML de la tarjeta
-    """
+    """Genera HTML de una tarjeta de producto."""
     color_super = COLORES_SUPERMERCADO.get(supermercado, '#95A5A6')
-    precio_str = f"{precio:.2f} EUR" if isinstance(precio, (int, float)) else str(precio)
+    precio_str = (f"{precio:.2f} €"
+                  if isinstance(precio, (int, float)) else str(precio))
 
     pu_html = ""
     if precio_unitario and unidad_precio:
