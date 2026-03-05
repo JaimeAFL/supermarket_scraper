@@ -439,7 +439,7 @@ def apex_distribucion_precios_html(df, supermercado="", completa=False):
             <div class="kpi-value">{media:.2f} €</div>
         </div>
         <div class="kpi-card">
-            <div class="kpi-label"> 50% de productos entre </div>
+            <div class="kpi-label">Q1 / Q3</div>
             <div class="kpi-value">{p25:.2f} / {p75:.2f} €</div>
         </div>
         <div class="kpi-card">
@@ -489,7 +489,8 @@ def apex_historico_precio_html(df_historico, nombre_producto=""):
             fontFamily: '$font',
             toolbar: { show: false },
             animations: { enabled: true, easing: 'easeinout', speed: 400 },
-            zoom: { enabled: false }
+            zoom: { enabled: false },
+            offsetX: 0
         },
         series: [{
             name: 'Precio',
@@ -521,7 +522,8 @@ def apex_historico_precio_html(df_historico, nombre_producto=""):
             type: 'datetime',
             labels: {
                 format: 'dd/MM/yy',
-                style: { fontSize: '11px', colors: '#6B7280' }
+                style: { fontSize: '11px', colors: '#6B7280' },
+                offsetX: 0
             },
             axisBorder: { color: '#E5E7EB' },
             axisTicks: { color: '#E5E7EB' }
@@ -539,6 +541,7 @@ def apex_historico_precio_html(df_historico, nombre_producto=""):
         grid: {
             borderColor: '#EEF2F7',
             strokeDashArray: 4,
+            padding: { right: 30, left: 10 },
             xaxis: { lines: { show: false } },
             yaxis: { lines: { show: true } }
         },
@@ -567,7 +570,11 @@ def apex_historico_precio_html(df_historico, nombre_producto=""):
 # ═══════════════════════════════════════════════════════════════════════
 
 def apex_comparativa_supermercados_html(df_historico_equiv):
-    """Grafico de lineas comparando precios entre supermercados."""
+    """Grafico de lineas comparando precios entre supermercados.
+
+    Usa tooltip compartido, patrones de linea distintos y markers
+    diferenciados para que se distingan series con precios similares.
+    """
     if df_historico_equiv.empty:
         return _html_vacio("No hay datos para comparar")
 
@@ -578,18 +585,42 @@ def apex_comparativa_supermercados_html(df_historico_equiv):
 
     df[cf] = pd.to_datetime(df[cf])
 
+    # Patrones de linea y formas de marker por serie (hasta 5 supers)
+    dash_patterns = [0, 5, [8, 4], [2, 2], [10, 2, 2, 2]]
+    marker_shapes = ['circle', 'square', 'diamond', 'triangle', 'cross']
+
     series_list = []
     colors_list = []
-    for s in df['supermercado'].unique():
+    dash_list = []
+    shape_list = []
+    for i, s in enumerate(df['supermercado'].unique()):
         df_s = df[df['supermercado'] == s].sort_values(cf)
         timestamps = (df_s[cf].astype(np.int64) // 10**6).tolist()
         precios = [round(float(p), 2) for p in df_s['precio'].tolist()]
         data_points = list(zip(timestamps, precios))
         series_list.append({"name": s, "data": data_points})
         colors_list.append(COLORES_SUPERMERCADO.get(s, '#95A5A6'))
+        dash_list.append(dash_patterns[i % len(dash_patterns)])
+        shape_list.append(marker_shapes[i % len(marker_shapes)])
 
     series_json = json.dumps(series_list)
     colors_json = json.dumps(colors_list)
+    dash_json = json.dumps(dash_list)
+
+    # Calcular rango Y para mas granularidad
+    all_prices = df['precio'].dropna()
+    y_min = float(all_prices.min())
+    y_max = float(all_prices.max())
+    y_range = y_max - y_min
+    # Si el rango es muy pequeno, forzar al menos 0.10€ de rango
+    if y_range < 0.10:
+        y_center = (y_min + y_max) / 2
+        y_min = y_center - 0.05
+        y_max = y_center + 0.05
+    # Padding del 15% arriba y abajo
+    y_padding = max(y_range * 0.15, 0.02)
+    y_min_axis = round(y_min - y_padding, 2)
+    y_max_axis = round(y_max + y_padding, 2)
 
     t = Template("""{
         chart: {
@@ -603,14 +634,16 @@ def apex_comparativa_supermercados_html(df_historico_equiv):
         series: $series,
         stroke: {
             curve: 'smooth',
-            width: 2.5
+            width: 3,
+            dashArray: $dashArray
         },
         colors: $colors,
         markers: {
-            size: 5,
+            size: 6,
             strokeColors: '#fff',
             strokeWidth: 2,
-            hover: { sizeOffset: 3 }
+            hover: { sizeOffset: 3 },
+            shape: ['circle', 'square', 'diamond', 'triangle']
         },
         xaxis: {
             type: 'datetime',
@@ -622,25 +655,34 @@ def apex_comparativa_supermercados_html(df_historico_equiv):
             axisTicks: { color: '#E5E7EB' }
         },
         yaxis: {
+            min: $ymin,
+            max: $ymax,
+            tickAmount: 8,
             title: {
                 text: 'Precio (€)',
                 style: { fontSize: '12px', color: '#6B7280', fontWeight: 500 }
             },
             labels: {
                 style: { fontSize: '11px', colors: '#6B7280' },
-                formatter: function(val) { return val.toFixed(2) + ' €'; }
+                formatter: function(val) { return val.toFixed(3) + ' €'; }
             }
         },
         grid: {
             borderColor: '#EEF2F7',
             strokeDashArray: 4,
+            padding: { right: 20, left: 10 },
             xaxis: { lines: { show: false } },
             yaxis: { lines: { show: true } }
         },
         tooltip: {
+            shared: true,
+            intersect: false,
             theme: 'dark',
             x: { format: 'dd/MM/yyyy' },
-            y: { formatter: function(val) { return val.toFixed(2) + ' €'; } }
+            y: { formatter: function(val) {
+                if (val === undefined || val === null) return '';
+                return val.toFixed(2) + ' €';
+            } }
         },
         legend: {
             position: 'top',
@@ -657,10 +699,14 @@ def apex_comparativa_supermercados_html(df_historico_equiv):
         font=_FONT,
         series=series_json,
         colors=colors_json,
+        dashArray=dash_json,
+        ymin=y_min_axis,
+        ymax=y_max_axis,
     )
 
     title_html = '<div class="chart-title">Comparativa de precios entre supermercados</div>'
+    subtitle_html = '<div class="chart-subtitle">Cada supermercado usa un patron de linea distinto para diferenciarlos</div>'
 
     return _html_page("chart-comp", options_js).replace(
         '<div id="chart-comp"></div>',
-        f'{title_html}<div id="chart-comp"></div>')
+        f'{title_html}{subtitle_html}<div id="chart-comp"></div>')

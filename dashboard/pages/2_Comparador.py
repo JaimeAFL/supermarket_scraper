@@ -48,10 +48,10 @@ def _anadir_precio_unitario(df):
 
 
 def _ids_favoritos_actuales():
-    """Devuelve set de IDs de productos ya en favoritos."""
+    """Devuelve set de IDs (Python int) de productos ya en favoritos."""
     df_favs = db.obtener_favoritos()
     if not df_favs.empty and 'id' in df_favs.columns:
-        return set(df_favs['id'].tolist())
+        return set(int(x) for x in df_favs['id'].tolist())
     return set()
 
 
@@ -315,10 +315,11 @@ with tab1:
                     else:
                         idx_mas_barato = df_filtrado['precio'].idxmin()
                     mas_barato = df_filtrado.loc[idx_mas_barato]
+                    id_barato = int(mas_barato['id'])
                     nombre_barato = (
                         f"{mas_barato['nombre']} "
                         f"({mas_barato['supermercado']})")
-                    ya_en_favs = mas_barato['id'] in ids_fav
+                    ya_en_favs = id_barato in ids_fav
 
                     st.markdown(f"**El mas barato:** {nombre_barato}")
                     if ya_en_favs:
@@ -328,16 +329,16 @@ with tab1:
                             "Anadir el mas barato a favoritos",
                             key="comp_fav_rapido"
                         ):
-                            db.agregar_favorito(mas_barato['id'])
+                            db.agregar_favorito(id_barato)
                             st.success(f"Anadido: {nombre_barato}")
                             st.rerun()
 
                 with col_manual:
                     opciones_fav = {
                         (f"{row['nombre']} ({row['supermercado']}) - "
-                         f"{row['precio']:.2f} €"): row['id']
+                         f"{row['precio']:.2f} €"): int(row['id'])
                         for _, row in df_filtrado.iterrows()
-                        if row['id'] not in ids_fav
+                        if int(row['id']) not in ids_fav
                     }
                     if opciones_fav:
                         fav_sel = st.selectbox(
@@ -367,7 +368,7 @@ with tab1:
             if not df_filtrado.empty:
                 opciones_eq = {
                     (f"{row['nombre']} ({row['supermercado']}) - "
-                     f"{row['precio']:.2f} €"): row['id']
+                     f"{row['precio']:.2f} €"): int(row['id'])
                     for _, row in df_filtrado.iterrows()
                 }
 
