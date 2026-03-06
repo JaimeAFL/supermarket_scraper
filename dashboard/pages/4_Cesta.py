@@ -22,7 +22,7 @@ from dashboard.utils.components import (
     barra_filtros, badge_html,
 )
 from dashboard.utils.export import (
-    generar_pdf_cesta, generar_mailto_link,
+    generar_pdf_cesta, generar_enlaces_email,
 )
 
 st.set_page_config(page_title="Cesta de la compra", page_icon="",
@@ -456,51 +456,75 @@ if cesta:
             st.rerun()
 
     # ═══════════════════════════════════════════════════════════════
-    # SECCIÓN D: GUARDAR TU CESTA (PDF + mailto)
+    # SECCIÓN D: GUARDAR TU CESTA (PDF + email web)
     # ═══════════════════════════════════════════════════════════════
     st.markdown("---")
     encabezado("Guardar tu cesta", "save", nivel=3)
 
-    col_pdf, col_email = st.columns(2)
+    # PDF
+    try:
+        pdf_bytes = generar_pdf_cesta(cesta)
+        nombre_pdf = (
+            f"lista_compra_"
+            f"{datetime.now().strftime('%Y%m%d_%H%M')}.pdf")
+        st.download_button(
+            label="Descargar lista de la compra (PDF)",
+            data=pdf_bytes,
+            file_name=nombre_pdf,
+            mime="application/pdf",
+            key="cesta_pdf_download",
+            use_container_width=True,
+        )
+    except Exception as e:
+        st.error(f"Error al generar PDF: {e}")
 
-    with col_pdf:
-        try:
-            pdf_bytes = generar_pdf_cesta(cesta)
-            nombre_pdf = (
-                f"lista_compra_"
-                f"{datetime.now().strftime('%Y%m%d_%H%M')}.pdf")
-            st.download_button(
-                label="Descargar lista de la compra (PDF)",
-                data=pdf_bytes,
-                file_name=nombre_pdf,
-                mime="application/pdf",
-                key="cesta_pdf_download",
-                use_container_width=True,
-            )
-        except Exception as e:
-            st.error(f"Error al generar PDF: {e}")
+    # Email web — 3 botones: Gmail, Outlook, Yahoo
+    st.caption("O envía la lista a tu correo (se abre en el navegador):")
 
-    with col_email:
-        mailto = generar_mailto_link(cesta)
+    enlaces = generar_enlaces_email(cesta)
+
+    _btn_style = (
+        "display:inline-flex;align-items:center;"
+        "justify-content:center;gap:8px;width:100%;"
+        "padding:10px 16px;border:1px solid #E0E4E8;"
+        "border-radius:8px;background:#F5F7FA;"
+        "color:#1F2937;text-decoration:none;"
+        "font-size:14px;font-weight:500;"
+        "font-family:Inter,sans-serif;cursor:pointer;"
+        "transition:background 0.2s"
+    )
+
+    col_gm, col_ol, col_yh = st.columns(3)
+
+    with col_gm:
         st.markdown(
-            f'<a href="{mailto}" target="_blank" '
-            f'style="display:inline-flex;align-items:center;'
-            f'justify-content:center;gap:8px;width:100%;'
-            f'padding:10px 16px;border:1px solid #E0E4E8;'
-            f'border-radius:8px;background:#F5F7FA;'
-            f'color:#1F2937;text-decoration:none;'
-            f'font-size:14px;font-weight:500;'
-            f'font-family:Inter,sans-serif;cursor:pointer;'
-            f'transition:background 0.2s"'
+            f'<a href="{enlaces["gmail"]}" target="_blank" '
+            f'style="{_btn_style}"'
             f' onmouseover="this.style.background=\'#E8ECF0\'"'
             f' onmouseout="this.style.background=\'#F5F7FA\'">'
-            f'<span class="material-icons-outlined" '
-            f'style="font-size:18px">email</span>'
-            f'Enviar por email</a>',
+            f'<span style="font-size:16px">📧</span>'
+            f'Gmail</a>',
             unsafe_allow_html=True)
-        st.caption(
-            "Se abrirá tu correo con la lista ya escrita. "
-            "Puedes adjuntar el PDF que acabas de descargar.")
+
+    with col_ol:
+        st.markdown(
+            f'<a href="{enlaces["outlook"]}" target="_blank" '
+            f'style="{_btn_style}"'
+            f' onmouseover="this.style.background=\'#E8ECF0\'"'
+            f' onmouseout="this.style.background=\'#F5F7FA\'">'
+            f'<span style="font-size:16px">📧</span>'
+            f'Outlook</a>',
+            unsafe_allow_html=True)
+
+    with col_yh:
+        st.markdown(
+            f'<a href="{enlaces["yahoo"]}" target="_blank" '
+            f'style="{_btn_style}"'
+            f' onmouseover="this.style.background=\'#E8ECF0\'"'
+            f' onmouseout="this.style.background=\'#F5F7FA\'">'
+            f'<span style="font-size:16px">📧</span>'
+            f'Yahoo</a>',
+            unsafe_allow_html=True)
 
 else:
     # Cesta vacía
