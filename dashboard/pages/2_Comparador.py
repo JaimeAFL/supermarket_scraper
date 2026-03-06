@@ -12,7 +12,6 @@ _DB_PATH = os.environ.get(
     os.path.join(_PROJECT_ROOT, "database", "supermercados.db"))
 
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 from database.database_db_manager import DatabaseManager
 from database.init_db import inicializar_base_datos
@@ -59,7 +58,7 @@ def _ids_favoritos_actuales():
 # ═══════════════════════════════════════════════════════════════════════
 # TABS
 # ═══════════════════════════════════════════════════════════════════════
-tab1 = st.tabs(["Comparar precios"])
+tab1, = st.tabs(["Comparar precios"])
 
 with tab1:
     st.markdown(
@@ -366,92 +365,3 @@ with tab1:
                                     float(sel_row['precio']),
                                     sel_row.get('formato_normalizado', ''))
                             st.success("Añadido a la cesta.")
-
-            # ── Guardar equivalencia ──────────────────────────────
-            #st.markdown("---")
-            #encabezado("Guardar equivalencia", "compare_arrows", nivel=3)
-            #st.caption(
-                #"Selecciona al menos 2 productos del mismo tipo "
-                #"de distintos supermercados para crear una "
-                #"equivalencia y seguir su precio.")
-
-            #if not df_filtrado.empty:
-                #opciones_eq = {
-                    #(f"{row['nombre']} ({row['supermercado']}) - "
-                     #f"{row['precio']:.2f} €"): int(row['id'])
-                    #for _, row in df_filtrado.iterrows()
-                #}
-
-                #if st.button("Preseleccionar el más barato de cada súper",
-                              #key="comp_eq_presel"):
-                    #if df_filtrado['precio_unitario'].notna().any():
-                        #presel = (df_filtrado.sort_values('precio_unitario')
-                                  #.groupby('supermercado').first().reset_index())
-                    #else:
-                        #presel = (df_filtrado.sort_values('precio')
-                                  #.groupby('supermercado').first().reset_index())
-                    #labels_presel = []
-                    #for _, r in presel.iterrows():
-                        #lbl = (f"{r['nombre']} ({r['supermercado']}) "
-                               #f"- {r['precio']:.2f} €")
-                        #if lbl in opciones_eq:
-                            #labels_presel.append(lbl)
-                    #st.session_state['comp_equiv'] = labels_presel
-
-                #ids_sel = st.multiselect(
-                    #"Selecciona productos equivalentes:",
-                    #list(opciones_eq.keys()), key="comp_equiv")
-                #nombre_equiv = st.text_input(
-                    #"Nombre de la equivalencia:",
-                    #placeholder=f"Ej: {busqueda}",
-                    #key="comp_nombre_eq")
-
-                #if st.button("Guardar equivalencia", key="comp_btn_eq",
-                              #type="primary"):
-                    #if not nombre_equiv:
-                        #st.warning("Escribe un nombre para la equivalencia.")
-                    #elif len(ids_sel) < 2:
-                        #st.warning("Selecciona al menos 2 productos.")
-                    #else:
-                        #db.crear_equivalencia(
-                            #nombre_equiv,
-                            #[opciones_eq[o] for o in ids_sel])
-                        #st.success(
-                            #f"Equivalencia «{nombre_equiv}» guardada "
-                            #f"con {len(ids_sel)} productos.")
-    #else:
-        #estado_vacio(
-            #"balance",
-            #"Escribe un producto para comparar precios",
-            #"Compara precios unitarios (€/L, €/kg) entre supermercados.")
-
-# ═══════════════════════════════════════════════════════════════════════
-# TAB 2: EQUIVALENCIAS GUARDADAS
-# ═══════════════════════════════════════════════════════════════════════
-#with tab2:
-    #grupos = db.listar_grupos_equivalencia()
-    #if not grupos:
-        #estado_vacio(
-            #"link_off",
-            #"No hay equivalencias guardadas",
-            #"Busca un producto en la pestaña 'Comparar precios' y "
-            #"guarda una equivalencia.")
-    #else:
-        #grupo_sel = st.selectbox("Equivalencia:", grupos, key="eq_grupo")
-        #if grupo_sel:
-            #df_eq = db.obtener_equivalencias(grupo_sel)
-            #if not df_eq.empty:
-                #st.dataframe(df_eq, use_container_width=True,
-                             #hide_index=True)
-                #from dashboard.utils.charts import (
-                    #apex_comparativa_supermercados_html,
-                #)
-                #df_hist_eq = db.obtener_historico_equivalencia(grupo_sel)
-                #if not df_hist_eq.empty and len(df_hist_eq) > 1:
-                    #components.html(
-                        #apex_comparativa_supermercados_html(df_hist_eq),
-                        #height=460, scrolling=False)
-            #else:
-                #estado_vacio(
-                    #"error_outline",
-                    #"No se encontraron productos para esta equivalencia")
