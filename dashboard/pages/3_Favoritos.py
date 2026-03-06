@@ -127,8 +127,8 @@ def _generar_pdf_favoritos(df_enriquecido):
     pdf.set_auto_page_break(auto=True, margin=20)
 
     if os.path.exists(_DEJAVU):
-        pdf.add_font('DejaVu', '', _DEJAVU, uni=True)
-        pdf.add_font('DejaVu', 'B', _DEJAVU_B, uni=True)
+        pdf.add_font('DejaVu', '', _DEJAVU)
+        pdf.add_font('DejaVu', 'B', _DEJAVU_B)
         font, eur = 'DejaVu', '€'
     else:
         font, eur = 'Helvetica', 'EUR'
@@ -226,31 +226,22 @@ encabezado("Eliminar favoritos", "remove_circle_outline", nivel=3)
 if not df_favs.empty:
     opciones_elim = _construir_opciones_favoritos(df_favs)
 
-    # Eliminar uno
     fav_eliminar = st.selectbox(
         "Selecciona el favorito a eliminar:",
         list(opciones_elim.keys()), key="fav_eliminar")
 
-    confirmar = st.checkbox(
-        "Confirmo que quiero eliminar este favorito",
-        key="fav_confirmar_elim")
     col_elim_uno, col_elim_todos = st.columns(2)
 
     with col_elim_uno:
         if st.button("Eliminar seleccionado", key="fav_btn_elim",
-                      disabled=not confirmar,
                       use_container_width=True):
             db.eliminar_favorito(opciones_elim[fav_eliminar])
             st.success("Eliminado.")
             st.rerun()
 
     with col_elim_todos:
-        confirmar_todos = st.checkbox(
-            "Confirmo eliminar TODOS los favoritos",
-            key="fav_confirmar_elim_todos")
         if st.button("Eliminar todos los favoritos",
                       key="fav_btn_elim_todos",
-                      disabled=not confirmar_todos,
                       use_container_width=True):
             for pid in opciones_elim.values():
                 db.eliminar_favorito(pid)

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Pagina: Calculadora de cesta de la compra."""
+"""Página: Calculadora de cesta de la compra."""
 
 import sys, os
 
@@ -22,8 +22,7 @@ from dashboard.utils.components import (
     barra_filtros, badge_html,
 )
 from dashboard.utils.export import (
-    generar_pdf_cesta, generar_resumen_texto,
-    enviar_cesta_por_email, smtp_configurado,
+    generar_pdf_cesta, generar_mailto_link,
 )
 
 st.set_page_config(page_title="Cesta de la compra", page_icon="",
@@ -32,14 +31,14 @@ inyectar_estilos()
 
 encabezado("Cesta de la compra", "shopping_cart")
 st.caption(
-    "Tu cesta se guarda durante la sesion. "
-    "Descargala como PDF o enviala a tu email para no perderla.")
+    "Tu cesta se guarda durante la sesión. "
+    "Descárgala como PDF o envíala a tu email para no perderla.")
 
 inicializar_base_datos(_DB_PATH)
 db = DatabaseManager(_DB_PATH)
 
-# ── Limite de productos ───────────────────────────────────────────────
-_MAX_ITEMS = 50
+# ── Límite de productos ──────────────────────────────────────────────
+_MAX_ITEMS = 80
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -55,7 +54,7 @@ if 'cesta' not in st.session_state:
 # ═══════════════════════════════════════════════════════════════════════
 
 def _buscar_alternativa(db, producto_id):
-    """Busca alternativa mas barata. Devuelve dict o None."""
+    """Busca alternativa más barata. Devuelve dict o None."""
     if not hasattr(db, 'buscar_alternativa_mas_barata'):
         return None
     try:
@@ -64,13 +63,13 @@ def _buscar_alternativa(db, producto_id):
         return None
 
 
-def _anadir_a_cesta(db, producto_id, cantidad):
-    """Anade un producto a la cesta con deteccion de alternativa."""
+def _añadir_a_cesta(db, producto_id, cantidad):
+    """Añade un producto a la cesta con detección de alternativa."""
     if len(st.session_state['cesta']) >= _MAX_ITEMS:
-        st.warning(f"Limite de {_MAX_ITEMS} productos alcanzado.")
+        st.warning(f"Límite de {_MAX_ITEMS} productos alcanzado.")
         return False
 
-    # Comprobar si ya esta en la cesta
+    # Comprobar si ya está en la cesta
     for item in st.session_state['cesta']:
         if item['producto_id'] == producto_id:
             item['cantidad'] += cantidad
@@ -83,7 +82,7 @@ def _anadir_a_cesta(db, producto_id, cantidad):
         prod = None
 
     if not prod:
-        st.error("No se encontro el producto.")
+        st.error("No se encontró el producto.")
         return False
 
     # Buscar alternativa
@@ -112,13 +111,13 @@ def _anadir_a_cesta(db, producto_id, cantidad):
 
 
 def _quitar_de_cesta(indice):
-    """Elimina un producto de la cesta por indice."""
+    """Elimina un producto de la cesta por índice."""
     if 0 <= indice < len(st.session_state['cesta']):
         st.session_state['cesta'].pop(indice)
 
 
 def _intercambiar_producto(db, indice):
-    """Intercambia un producto por su alternativa mas barata."""
+    """Intercambia un producto por su alternativa más barata."""
     cesta = st.session_state['cesta']
     if indice < 0 or indice >= len(cesta):
         return
@@ -138,7 +137,7 @@ def _intercambiar_producto(db, indice):
     item['supermercado'] = item['alternativa_super']
     item['precio'] = item['alternativa_precio']
 
-    # Recalcular alternativa desde la nueva posicion
+    # Recalcular alternativa desde la nueva posición
     nueva_alt = _buscar_alternativa(db, item['producto_id'])
     item['alternativa_id'] = int(nueva_alt['id']) if nueva_alt else None
     item['alternativa_nombre'] = nueva_alt.get('nombre') if nueva_alt else None
@@ -176,7 +175,7 @@ def _deshacer_intercambio(db, indice):
 
 
 def _optimizar_toda_la_cesta(db):
-    """Intercambia todos los productos que tienen alternativa mas barata."""
+    """Intercambia todos los productos que tienen alternativa más barata."""
     for i, item in enumerate(st.session_state['cesta']):
         if (item.get('alternativa_id')
                 and item.get('alternativa_precio') is not None
@@ -186,7 +185,7 @@ def _optimizar_toda_la_cesta(db):
 
 
 def _calcular_totales(cesta):
-    """Calcula metricas de la cesta."""
+    """Calcula métricas de la cesta."""
     total = sum(i['precio'] * i['cantidad'] for i in cesta)
     n_items = sum(i['cantidad'] for i in cesta)
     ahorro = sum(
@@ -260,9 +259,9 @@ def _tarjeta_cesta_html(item, indice):
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# SECCION A: BUSCADOR + ANADIR PRODUCTO
+# SECCIÓN A: BUSCADOR + AÑADIR PRODUCTO
 # ═══════════════════════════════════════════════════════════════════════
-encabezado("Anadir productos", "add_shopping_cart", nivel=3)
+encabezado("Añadir productos", "add_shopping_cart", nivel=3)
 
 col_busq, col_super, col_cant = st.columns([3, 1.5, 1])
 with col_busq:
@@ -288,7 +287,7 @@ if busqueda_cesta:
         df_res = db.buscar_productos(
             nombre=busqueda_cesta,
             supermercado=super_param,
-            limite=30)
+            limite=100)
 
     if not df_res.empty:
         # Filtrar solo prioridad 1 si existe
@@ -306,22 +305,22 @@ if busqueda_cesta:
             f"Productos encontrados ({len(df_res)}):",
             list(opciones.keys()), key="cesta_sel")
 
-        if st.button("Anadir a la cesta", key="cesta_btn_add",
+        if st.button("Añadir a la cesta", key="cesta_btn_add",
                       type="primary"):
-            ok = _anadir_a_cesta(db, opciones[sel_producto],
+            ok = _añadir_a_cesta(db, opciones[sel_producto],
                                   cantidad_input)
             if ok:
-                st.success("Producto anadido a la cesta.")
+                st.success("Producto añadido a la cesta.")
                 st.rerun()
     else:
         estado_vacio(
             "search_off",
             f"No se encontraron productos con '{busqueda_cesta}'",
-            "Prueba con otro termino.")
+            "Prueba con otro término.")
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# SECCION B: TU CESTA
+# SECCIÓN B: TU CESTA
 # ═══════════════════════════════════════════════════════════════════════
 st.markdown("---")
 cesta = st.session_state['cesta']
@@ -334,14 +333,14 @@ if cesta:
         f"· {totales['total']:.2f} €)",
         "shopping_bag", nivel=3)
 
-    # Renderizar cada producto con botones de accion
+    # Renderizar cada producto con botones de acción
     for i, item in enumerate(cesta):
         # Tarjeta visual
         st.markdown(
             _tarjeta_cesta_html(item, i),
             unsafe_allow_html=True)
 
-        # Botones de accion debajo de cada tarjeta
+        # Botones de acción debajo de cada tarjeta
         cols_btn = st.columns([1, 1, 1, 3])
 
         with cols_btn[0]:
@@ -351,7 +350,7 @@ if cesta:
                 st.rerun()
 
         with cols_btn[1]:
-            # Boton de intercambiar o deshacer
+            # Botón de intercambiar o deshacer
             alt_precio = item.get('alternativa_precio')
             tiene_alt = (alt_precio is not None
                          and alt_precio < item['precio'])
@@ -381,7 +380,7 @@ if cesta:
                 st.rerun()
 
     # ═══════════════════════════════════════════════════════════════
-    # SECCION C: RESUMEN Y TOTALES
+    # SECCIÓN C: RESUMEN Y TOTALES
     # ═══════════════════════════════════════════════════════════════
     st.markdown("---")
     encabezado("Resumen", "receipt_long", nivel=3)
@@ -418,7 +417,7 @@ if cesta:
             pd.DataFrame(datos_desglose),
             use_container_width=True, hide_index=True)
 
-    # Botones de accion global
+    # Botones de acción global
     st.markdown("")
     col_opt, col_clear = st.columns(2)
 
@@ -442,7 +441,7 @@ if cesta:
                 st.rerun()
         else:
             st.button(
-                "Tu cesta ya esta optimizada",
+                "Tu cesta ya está optimizada",
                 disabled=True,
                 use_container_width=True,
                 key="cesta_optimizada_disabled")
@@ -457,7 +456,7 @@ if cesta:
             st.rerun()
 
     # ═══════════════════════════════════════════════════════════════
-    # SECCION D: EXPORTAR (PDF + EMAIL)
+    # SECCIÓN D: GUARDAR TU CESTA (PDF + mailto)
     # ═══════════════════════════════════════════════════════════════
     st.markdown("---")
     encabezado("Guardar tu cesta", "save", nivel=3)
@@ -482,38 +481,31 @@ if cesta:
             st.error(f"Error al generar PDF: {e}")
 
     with col_email:
-        if smtp_configurado():
-            email_dest = st.text_input(
-                "Email:",
-                placeholder="tu@email.com",
-                key="cesta_email_dest")
-
-            if st.button("Enviar al correo",
-                          key="cesta_email_btn",
-                          use_container_width=True):
-                if not email_dest or '@' not in email_dest:
-                    st.warning("Introduce un email valido.")
-                else:
-                    try:
-                        pdf_b = generar_pdf_cesta(cesta)
-                        resumen = generar_resumen_texto(cesta)
-                        enviar_cesta_por_email(
-                            email_dest, pdf_b, resumen)
-                        st.success(
-                            f"Lista enviada a {email_dest}")
-                    except ValueError as e:
-                        st.error(str(e))
-                    except Exception as e:
-                        st.error(f"Error al enviar: {e}")
-        else:
-            st.caption(
-                "Para enviar por email, configura "
-                "SMTP_USER y SMTP_PASSWORD en el archivo .env")
+        mailto = generar_mailto_link(cesta)
+        st.markdown(
+            f'<a href="{mailto}" target="_blank" '
+            f'style="display:inline-flex;align-items:center;'
+            f'justify-content:center;gap:8px;width:100%;'
+            f'padding:10px 16px;border:1px solid #E0E4E8;'
+            f'border-radius:8px;background:#F5F7FA;'
+            f'color:#1F2937;text-decoration:none;'
+            f'font-size:14px;font-weight:500;'
+            f'font-family:Inter,sans-serif;cursor:pointer;'
+            f'transition:background 0.2s"'
+            f' onmouseover="this.style.background=\'#E8ECF0\'"'
+            f' onmouseout="this.style.background=\'#F5F7FA\'">'
+            f'<span class="material-icons-outlined" '
+            f'style="font-size:18px">email</span>'
+            f'Enviar por email</a>',
+            unsafe_allow_html=True)
+        st.caption(
+            "Se abrirá tu correo con la lista ya escrita. "
+            "Puedes adjuntar el PDF que acabas de descargar.")
 
 else:
-    # Cesta vacia
+    # Cesta vacía
     estado_vacio(
         "shopping_cart",
-        "Tu cesta esta vacia",
-        "Busca productos arriba y anadeselos a tu lista de la compra."
+        "Tu cesta está vacía",
+        "Busca productos arriba y añádelos a tu lista de la compra."
     )
