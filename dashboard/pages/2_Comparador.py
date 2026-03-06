@@ -59,7 +59,7 @@ def _ids_favoritos_actuales():
 # ═══════════════════════════════════════════════════════════════════════
 # TABS
 # ═══════════════════════════════════════════════════════════════════════
-tab1, tab2 = st.tabs(["Comparar precios", "Equivalencias guardadas"])
+tab1 = st.tabs(["Comparar precios"])
 
 with tab1:
     st.markdown(
