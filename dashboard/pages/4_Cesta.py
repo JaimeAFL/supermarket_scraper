@@ -478,52 +478,59 @@ if cesta:
     except Exception as e:
         st.error(f"Error al generar PDF: {e}")
 
-    # Email web — 3 botones: Gmail, Outlook, Yahoo
+    # Email web — botones con logo del servicio
     st.caption("O envía la lista a tu correo (se abre en el navegador):")
 
     enlaces = generar_enlaces_email(cesta)
 
-    _btn_style = (
-        "display:inline-flex;align-items:center;"
-        "justify-content:center;gap:8px;width:100%;"
-        "padding:10px 16px;border:1px solid #E0E4E8;"
-        "border-radius:8px;background:#F5F7FA;"
-        "color:#1F2937;text-decoration:none;"
-        "font-size:14px;font-weight:500;"
-        "font-family:Inter,sans-serif;cursor:pointer;"
-        "transition:background 0.2s"
+    # Logos via Simple Icons CDN (SVG, ligeros, oficiales)
+    _LOGO_GMAIL = "https://cdn.simpleicons.org/gmail/EA4335"
+    _LOGO_OUTLOOK = "https://cdn.simpleicons.org/microsoftoutlook/0078D4"
+    _LOGO_YAHOO = "https://cdn.simpleicons.org/yahoo/6001D2"
+
+    _btn_base = (
+        "display:flex;flex-direction:column;align-items:center;"
+        "justify-content:center;gap:6px;width:100%;"
+        "padding:14px 12px;border:1px solid #E0E4E8;"
+        "border-radius:12px;background:#FFFFFF;"
+        "text-decoration:none;cursor:pointer;"
+        "transition:all 0.2s ease;"
+        "box-shadow:0 1px 3px rgba(0,0,0,0.04)"
     )
+    _btn_hover = "this.style.background='#F5F7FA';this.style.boxShadow='0 2px 8px rgba(0,0,0,0.08)';this.style.borderColor='#C4CDD5'"
+    _btn_out = "this.style.background='#FFFFFF';this.style.boxShadow='0 1px 3px rgba(0,0,0,0.04)';this.style.borderColor='#E0E4E8'"
+    _label_style = "font-size:11px;font-weight:500;color:#6B7280;font-family:Inter,sans-serif"
 
     col_gm, col_ol, col_yh = st.columns(3)
 
     with col_gm:
         st.markdown(
             f'<a href="{enlaces["gmail"]}" target="_blank" '
-            f'style="{_btn_style}"'
-            f' onmouseover="this.style.background=\'#E8ECF0\'"'
-            f' onmouseout="this.style.background=\'#F5F7FA\'">'
-            f'<span style="font-size:16px">📧</span>'
-            f'Gmail</a>',
+            f'style="{_btn_base}" title="Enviar con Gmail"'
+            f' onmouseover="{_btn_hover}"'
+            f' onmouseout="{_btn_out}">'
+            f'<img src="{_LOGO_GMAIL}" width="28" height="28" alt="Gmail">'
+            f'<span style="{_label_style}">Gmail</span></a>',
             unsafe_allow_html=True)
 
     with col_ol:
         st.markdown(
             f'<a href="{enlaces["outlook"]}" target="_blank" '
-            f'style="{_btn_style}"'
-            f' onmouseover="this.style.background=\'#E8ECF0\'"'
-            f' onmouseout="this.style.background=\'#F5F7FA\'">'
-            f'<span style="font-size:16px">📧</span>'
-            f'Outlook</a>',
+            f'style="{_btn_base}" title="Enviar con Outlook"'
+            f' onmouseover="{_btn_hover}"'
+            f' onmouseout="{_btn_out}">'
+            f'<img src="{_LOGO_OUTLOOK}" width="28" height="28" alt="Outlook">'
+            f'<span style="{_label_style}">Outlook</span></a>',
             unsafe_allow_html=True)
 
     with col_yh:
         st.markdown(
             f'<a href="{enlaces["yahoo"]}" target="_blank" '
-            f'style="{_btn_style}"'
-            f' onmouseover="this.style.background=\'#E8ECF0\'"'
-            f' onmouseout="this.style.background=\'#F5F7FA\'">'
-            f'<span style="font-size:16px">📧</span>'
-            f'Yahoo</a>',
+            f'style="{_btn_base}" title="Enviar con Yahoo"'
+            f' onmouseover="{_btn_hover}"'
+            f' onmouseout="{_btn_out}">'
+            f'<img src="{_LOGO_YAHOO}" width="28" height="28" alt="Yahoo">'
+            f'<span style="{_label_style}">Yahoo</span></a>',
             unsafe_allow_html=True)
 
 else:
