@@ -462,11 +462,9 @@ if cesta:
     encabezado("Guardar tu cesta", "save", nivel=3)
 
     # PDF
+    nombre_pdf = f"lista_compra_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
     try:
         pdf_bytes = generar_pdf_cesta(cesta)
-        nombre_pdf = (
-            f"lista_compra_"
-            f"{datetime.now().strftime('%Y%m%d_%H%M')}.pdf")
         st.download_button(
             label="Descargar lista de la compra (PDF)",
             data=pdf_bytes,
@@ -479,7 +477,12 @@ if cesta:
         st.error(f"Error al generar PDF: {e}")
 
     # Email web — botones con logo del servicio
-    st.caption("O envía la lista a tu correo (se abre en el navegador):")
+    st.caption("Enviar por email (abre redacción en webmail):")
+    st.info(
+        "Los proveedores web (Gmail/Outlook/Yahoo) no permiten adjuntar "
+        "un PDF automáticamente desde un enlace por seguridad. "
+        f"Paso recomendado: 1) descarga {nombre_pdf} y 2) adjúntalo manualmente al abrir el correo."
+    )
 
     enlaces = generar_enlaces_email(cesta)
 

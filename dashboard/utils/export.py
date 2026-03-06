@@ -182,6 +182,9 @@ def generar_enlaces_email(cesta):
 
     No necesita SMTP, ni servidor, ni credenciales, ni app de escritorio.
 
+    Nota: los enlaces webmail rellenan asunto/cuerpo, pero NO pueden adjuntar
+    ficheros automáticamente por restricciones de seguridad de los proveedores.
+
     Returns:
         dict con claves 'gmail', 'outlook', 'yahoo', cada una con la URL
     """
@@ -192,8 +195,8 @@ def generar_enlaces_email(cesta):
         "Lista de la compra generada con Supermarket Price Tracker:\n"
         f"{resumen}\n\n"
         "---\n"
-        "Tip: descarga también el PDF desde la app para "
-        "tener la lista con formato listo para imprimir."
+        "Tip: descarga el PDF desde la app y adjúntalo manualmente en el "
+        "correo (los enlaces web no permiten adjuntar archivos automáticamente)."
     )
 
     asunto_enc = quote(asunto)
