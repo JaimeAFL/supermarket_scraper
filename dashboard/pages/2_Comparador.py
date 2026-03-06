@@ -361,58 +361,7 @@ if busqueda:
                                 sel_row.get('formato_normalizado', ''))
                         st.success("Añadido a la cesta.")
 
-        # ── Guardar equivalencia ──────────────────────────────
-        #st.markdown("---")
-        #encabezado("Guardar equivalencia", "compare_arrows", nivel=3)
-        #st.caption(
-            #"Selecciona al menos 2 productos del mismo tipo "
-            #"de distintos supermercados para crear una "
-            #"equivalencia y seguir su precio.")
 
-        #if not df_filtrado.empty:
-            #opciones_eq = {
-                #(f"{row['nombre']} ({row['supermercado']}) - "
-                 #f"{row['precio']:.2f} €"): int(row['id'])
-                #for _, row in df_filtrado.iterrows()
-            #}
-
-            #if st.button("Preseleccionar el más barato de cada súper",
-                          #key="comp_eq_presel"):
-                #if df_filtrado['precio_unitario'].notna().any():
-                    #presel = (df_filtrado.sort_values('precio_unitario')
-                              #.groupby('supermercado').first().reset_index())
-                #else:
-                    #presel = (df_filtrado.sort_values('precio')
-                              #.groupby('supermercado').first().reset_index())
-                #labels_presel = []
-                #for _, r in presel.iterrows():
-                    #lbl = (f"{r['nombre']} ({r['supermercado']}) "
-                           #f"- {r['precio']:.2f} €")
-                    #if lbl in opciones_eq:
-                        #labels_presel.append(lbl)
-                #st.session_state['comp_equiv'] = labels_presel
-
-            #ids_sel = st.multiselect(
-                #"Selecciona productos equivalentes:",
-                #list(opciones_eq.keys()), key="comp_equiv")
-            #nombre_equiv = st.text_input(
-                #"Nombre de la equivalencia:",
-                #placeholder=f"Ej: {busqueda}",
-                #key="comp_nombre_eq")
-
-            #if st.button("Guardar equivalencia", key="comp_btn_eq",
-                          #type="primary"):
-                #if not nombre_equiv:
-                    #st.warning("Escribe un nombre para la equivalencia.")
-                #elif len(ids_sel) < 2:
-                    #st.warning("Selecciona al menos 2 productos.")
-                #else:
-                    #db.crear_equivalencia(
-                        #nombre_equiv,
-                        #[opciones_eq[o] for o in ids_sel])
-                    #st.success(
-                        #f"Equivalencia «{nombre_equiv}» guardada "
-                        #f"con {len(ids_sel)} productos.")
 else:
     estado_vacio(
         "balance",
