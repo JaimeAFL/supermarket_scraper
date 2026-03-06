@@ -483,14 +483,16 @@ if cesta:
 
     enlaces = generar_enlaces_email(cesta)
 
-    # Logos via Simple Icons CDN (SVG, ligeros, oficiales)
-    _LOGO_GMAIL = "https://cdn.simpleicons.org/gmail/EA4335"
-    _LOGO_OUTLOOK = "https://cdn.simpleicons.org/microsoftoutlook/0078D4"
-    _LOGO_YAHOO = "https://cdn.simpleicons.org/yahoo/6001D2"
+    # Logos de proveedores de correo (favicons por dominio, estables)
+    # Evitamos depender de slugs/versiones de catálogos de iconos externos que
+    # pueden cambiar y devolver 404 para algunas marcas.
+    _LOGO_GMAIL = "https://www.google.com/s2/favicons?domain=gmail.com&sz=64"
+    _LOGO_OUTLOOK = "https://www.google.com/s2/favicons?domain=outlook.live.com&sz=64"
+    _LOGO_YAHOO = "https://www.google.com/s2/favicons?domain=mail.yahoo.com&sz=64"
 
     _btn_base = (
         "display:flex;flex-direction:column;align-items:center;"
-        "justify-content:center;gap:6px;width:100%;"
+        "justify-content:center;gap:8px;width:100%;"
         "padding:14px 12px;border:1px solid #E0E4E8;"
         "border-radius:12px;background:#FFFFFF;"
         "text-decoration:none;cursor:pointer;"
@@ -499,37 +501,44 @@ if cesta:
     )
     _btn_hover = "this.style.background='#F5F7FA';this.style.boxShadow='0 2px 8px rgba(0,0,0,0.08)';this.style.borderColor='#C4CDD5'"
     _btn_out = "this.style.background='#FFFFFF';this.style.boxShadow='0 1px 3px rgba(0,0,0,0.04)';this.style.borderColor='#E0E4E8'"
+    _icon_circle_style = (
+        "width:52px;height:52px;border-radius:999px;"
+        "display:flex;align-items:center;justify-content:center;"
+        "background:#FFFFFF;border:1px solid #E5E7EB;"
+        "box-shadow:0 2px 6px rgba(0,0,0,0.08);overflow:hidden"
+    )
+    _icon_img_style = "width:32px;height:32px;object-fit:contain;border-radius:999px"
     _label_style = "font-size:11px;font-weight:500;color:#6B7280;font-family:Inter,sans-serif"
 
     col_gm, col_ol, col_yh = st.columns(3)
 
     with col_gm:
         st.markdown(
-            f'<a href="{enlaces["gmail"]}" target="_blank" '
+            f'<a href="{enlaces["gmail"]}" target="_blank" rel="noopener noreferrer" '
             f'style="{_btn_base}" title="Enviar con Gmail"'
             f' onmouseover="{_btn_hover}"'
             f' onmouseout="{_btn_out}">'
-            f'<img src="{_LOGO_GMAIL}" width="28" height="28" alt="Gmail">'
+            f'<span style="{_icon_circle_style}"><img src="{_LOGO_GMAIL}" style="{_icon_img_style}" alt="Gmail"></span>'
             f'<span style="{_label_style}">Gmail</span></a>',
             unsafe_allow_html=True)
 
     with col_ol:
         st.markdown(
-            f'<a href="{enlaces["outlook"]}" target="_blank" '
+            f'<a href="{enlaces["outlook"]}" target="_blank" rel="noopener noreferrer" '
             f'style="{_btn_base}" title="Enviar con Outlook"'
             f' onmouseover="{_btn_hover}"'
             f' onmouseout="{_btn_out}">'
-            f'<img src="{_LOGO_OUTLOOK}" width="28" height="28" alt="Outlook">'
+            f'<span style="{_icon_circle_style}"><img src="{_LOGO_OUTLOOK}" style="{_icon_img_style}" alt="Outlook"></span>'
             f'<span style="{_label_style}">Outlook</span></a>',
             unsafe_allow_html=True)
 
     with col_yh:
         st.markdown(
-            f'<a href="{enlaces["yahoo"]}" target="_blank" '
+            f'<a href="{enlaces["yahoo"]}" target="_blank" rel="noopener noreferrer" '
             f'style="{_btn_base}" title="Enviar con Yahoo"'
             f' onmouseover="{_btn_hover}"'
             f' onmouseout="{_btn_out}">'
-            f'<img src="{_LOGO_YAHOO}" width="28" height="28" alt="Yahoo">'
+            f'<span style="{_icon_circle_style}"><img src="{_LOGO_YAHOO}" style="{_icon_img_style}" alt="Yahoo"></span>'
             f'<span style="{_label_style}">Yahoo</span></a>',
             unsafe_allow_html=True)
 
