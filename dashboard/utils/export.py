@@ -171,20 +171,19 @@ def generar_resumen_texto(cesta):
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# ENLACE MAILTO (reemplaza SMTP — sin servidor, sin credenciales)
+# ENLACES DE EMAIL WEB (sin servidor, sin credenciales)
 # ═══════════════════════════════════════════════════════════════════════
 
-def generar_mailto_link(cesta):
-    """Genera un enlace mailto: con el resumen de la cesta.
+def generar_enlaces_email(cesta):
+    """Genera enlaces para abrir el compositor de email en navegador.
 
-    Al hacer clic, se abre el cliente de correo del usuario
-    (Gmail, Outlook, Apple Mail, etc.) con el asunto y cuerpo
-    ya rellenos. El usuario se lo envía a sí mismo.
+    Devuelve un dict con enlaces directos a Gmail, Outlook.com y Yahoo
+    que abren la ventana de redacción con asunto y cuerpo ya rellenos.
 
-    No necesita SMTP, ni servidor, ni credenciales.
+    No necesita SMTP, ni servidor, ni credenciales, ni app de escritorio.
 
     Returns:
-        str: enlace mailto: listo para usar en <a href="...">
+        dict con claves 'gmail', 'outlook', 'yahoo', cada una con la URL
     """
     fecha = datetime.now().strftime('%d/%m/%Y')
     asunto = f"Mi lista de la compra - {fecha}"
@@ -193,15 +192,32 @@ def generar_mailto_link(cesta):
         "Lista de la compra generada con Supermarket Price Tracker:\n"
         f"{resumen}\n\n"
         "---\n"
-        "Tip: descarga tambien el PDF desde la app para "
+        "Tip: descarga también el PDF desde la app para "
         "tener la lista con formato listo para imprimir."
     )
 
-    # Codificar para URL
     asunto_enc = quote(asunto)
     cuerpo_enc = quote(cuerpo)
+    # Para Outlook web se necesita codificación con + en vez de %20
+    cuerpo_enc_outlook = quote(cuerpo, safe='')
 
-    return f"mailto:?subject={asunto_enc}&body={cuerpo_enc}"
+    return {
+        # Gmail: https://mail.google.com/mail/?view=cm&su=...&body=...
+        'gmail': (
+            f"https://mail.google.com/mail/?view=cm&fs=1"
+            f"&su={asunto_enc}&body={cuerpo_enc}"
+        ),
+        # Outlook.com: https://outlook.live.com/mail/0/deeplink/compose?...
+        'outlook': (
+            f"https://outlook.live.com/mail/0/deeplink/compose"
+            f"?subject={asunto_enc}&body={cuerpo_enc_outlook}"
+        ),
+        # Yahoo: https://compose.mail.yahoo.com/?subject=...&body=...
+        'yahoo': (
+            f"https://compose.mail.yahoo.com/"
+            f"?subject={asunto_enc}&body={cuerpo_enc}"
+        ),
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════
