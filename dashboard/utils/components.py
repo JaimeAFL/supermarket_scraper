@@ -167,7 +167,7 @@ def paginar_dataframe(df, clave_pagina, filas_por_pagina=20):
         f'<div class="pagination-info">'
         f'<span>Mostrando <span class="page-range">{inicio + 1}–{fin}</span>'
         f' de <span class="page-range">{total_filas}</span> resultados</span>'
-        f'<span>Pagina {pagina_actual} de {total_paginas}</span>'
+        f'<span>Página {pagina_actual} de {total_paginas}</span>'
         f'</div>',
         unsafe_allow_html=True)
 
@@ -185,7 +185,7 @@ def paginar_dataframe(df, clave_pagina, filas_por_pagina=20):
 
         with col_paginas:
             nueva_pagina = st.select_slider(
-                "Pagina", options=list(range(1, total_paginas + 1)),
+                "Página", options=list(range(1, total_paginas + 1)),
                 value=pagina_actual, key=f"{clave_pagina}_slider",
                 label_visibility="collapsed"
             )
@@ -254,7 +254,7 @@ def barra_filtros(db, clave_vista, mostrar_busqueda=True, mostrar_super=True,
     if mostrar_busqueda:
         with columnas[idx]:
             filtros['busqueda'] = st.text_input(
-                "Buscar:", placeholder="Ej: leche, cafe, aceite...",
+                "Buscar:", placeholder="Ej: leche, café, aceite...",
                 key=f"{clave_vista}_busq")
         idx += 1
 
@@ -272,7 +272,7 @@ def barra_filtros(db, clave_vista, mostrar_busqueda=True, mostrar_super=True,
             cats = db.obtener_categorias()
             opciones_cat = ['Todas'] + [c[0] for c in cats]
             sel_cat = st.selectbox(
-                "Categoria:", opciones_cat, key=f"{clave_vista}_cat")
+                "Categoría:", opciones_cat, key=f"{clave_vista}_cat")
             filtros['categoria'] = None if sel_cat == 'Todas' else sel_cat
         idx += 1
 
@@ -384,3 +384,42 @@ def _obtener_supermercados(_db):
     if df.empty:
         return []
     return sorted(df['supermercado'].unique().tolist())
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# CESTA DE LA COMPRA (helper compartido entre páginas)
+# ═══════════════════════════════════════════════════════════════════════
+
+def añadir_a_cesta_rapido(producto_id, nombre, supermercado, precio,
+                           formato_normalizado=""):
+    """Añade un producto a la cesta rápidamente desde cualquier página.
+
+    Inicializa session_state['cesta'] si no existe.
+    Si el producto ya está en la cesta, incrementa la cantidad.
+    """
+    if 'cesta' not in st.session_state:
+        st.session_state['cesta'] = []
+
+    # Comprobar si ya está
+    for item in st.session_state['cesta']:
+        if item.get('producto_id') == int(producto_id):
+            item['cantidad'] += 1
+            return
+
+    st.session_state['cesta'].append({
+        'producto_id': int(producto_id),
+        'nombre': nombre,
+        'supermercado': supermercado,
+        'precio': float(precio),
+        'formato_normalizado': formato_normalizado,
+        'marca': '',
+        'cantidad': 1,
+        'alternativa_id': None,
+        'alternativa_nombre': None,
+        'alternativa_super': None,
+        'alternativa_precio': None,
+        'original_id': None,
+        'original_nombre': None,
+        'original_super': None,
+        'original_precio': None,
+    })

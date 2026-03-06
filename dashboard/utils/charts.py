@@ -439,7 +439,7 @@ def apex_distribucion_precios_html(df, supermercado="", completa=False):
             <div class="kpi-value">{media:.2f} €</div>
         </div>
         <div class="kpi-card">
-            <div class="kpi-label">Q1 / Q3</div>
+            <div class="kpi-label"> 50% de productos entre </div>
             <div class="kpi-value">{p25:.2f} / {p75:.2f} €</div>
         </div>
         <div class="kpi-card">
