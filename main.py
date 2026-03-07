@@ -16,6 +16,7 @@ import sys
 import subprocess
 import logging
 from datetime import datetime
+from concurrent.futures import ProcessPoolExecutor, TimeoutError as FuturesTimeoutError
 from dotenv import load_dotenv
 import pandas as pd
 
@@ -31,6 +32,48 @@ from scraper.alcampo import gestion_alcampo
 from scraper.eroski import gestion_eroski
 from database.init_db import inicializar_base_datos
 from database.database_db_manager import DatabaseManager
+
+
+SCRAPER_TIMEOUTS = {
+    "Mercadona": int(os.getenv("TIMEOUT_MERCADONA_MIN", "15")) * 60,
+    "Carrefour": int(os.getenv("TIMEOUT_CARREFOUR_MIN", "40")) * 60,
+    "Dia": int(os.getenv("TIMEOUT_DIA_MIN", "20")) * 60,
+    "Alcampo": int(os.getenv("TIMEOUT_ALCAMPO_MIN", "45")) * 60,
+    "Eroski": int(os.getenv("TIMEOUT_EROSKI_MIN", "110")) * 60,
+}
+
+
+def _run_scraper_function(funcion_scraper):
+    """Ejecutor aislado para poder aplicar timeout por scraper."""
+    return funcion_scraper()
+
+
+def _ejecutar_scraper_con_timeout(nombre, funcion_scraper, logger):
+    """Ejecuta un scraper en proceso aislado con timeout duro."""
+    timeout = SCRAPER_TIMEOUTS.get(nombre, 3600)
+    inicio = datetime.now()
+    logger.info("Timeout de %s: %d min", nombre, timeout // 60)
+
+    with ProcessPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(_run_scraper_function, funcion_scraper)
+        try:
+            df = future.result(timeout=timeout)
+            dur = (datetime.now() - inicio).total_seconds()
+            logger.info(
+                "%s finalizado en %dm %ds", nombre,
+                int(dur // 60), int(dur % 60)
+            )
+            return df
+        except FuturesTimeoutError:
+            logger.error(
+                "%s excedió el timeout de %d min y se ha abortado.",
+                nombre, timeout // 60,
+            )
+            future.cancel()
+            return pd.DataFrame()
+        except Exception as e:
+            logger.error("Error ejecutando scraper de %s: %s", nombre, e)
+            return pd.DataFrame()
 
 
 def setup_logging():
@@ -124,11 +167,7 @@ def main():
         logger.info(nombre.upper())
         logger.info("-" * 40)
 
-        try:
-            df = funcion_scraper()
-        except Exception as e:
-            logger.error("Error ejecutando scraper de %s: %s", nombre, e)
-            df = pd.DataFrame()
+        df = _ejecutar_scraper_con_timeout(nombre, funcion_scraper, logger)
 
         resultados[nombre] = len(df)
 
