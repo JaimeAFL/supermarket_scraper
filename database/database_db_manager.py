@@ -78,8 +78,8 @@ class DatabaseManager:
                 precio_por_unidad = str(row.get("Precio_unidad") or "").strip()
                 categoria  = str(row.get("Categoria") or "").strip()
                 formato    = str(row.get("Formato") or "").strip()
-                url        = str(row.get("URL") or "").strip()
-                url_imagen = str(row.get("URL_imagen") or "").strip()
+                url        = str(row.get("URL") or row.get("Url") or "").strip()
+                url_imagen = str(row.get("URL_imagen") or row.get("Url_imagen") or "").strip()
 
                 # ── Normalización ──
                 if _NORMALIZER_OK:
@@ -674,4 +674,3 @@ class DatabaseManager:
         except Exception as e:
             logger.error("buscar_alternativa_mas_barata: %s", e)
             return None
-

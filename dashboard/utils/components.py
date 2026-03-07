@@ -432,25 +432,45 @@ def añadir_a_cesta_rapido(producto_id, nombre, supermercado, precio,
 def obtener_url_producto(db, producto_id):
     """Obtiene la URL de un producto desde la BD.
 
+    Si la columna url está vacía (problema de case en guardar_productos),
+    construye la URL a partir de id_externo + supermercado usando los
+    patrones conocidos de cada supermercado.
+
     Returns:
-        str: URL del producto o cadena vacía si no existe.
+        str: URL del producto o cadena vacía si no es posible.
     """
+    # Patrones de URL conocidos por supermercado
+    _URL_PATTERNS = {
+        'Alcampo': 'https://www.compraonline.alcampo.es/products/{}',
+        'Eroski': 'https://www.eroski.es/es/productdetail/{}/',
+        'Carrefour': 'https://www.carrefour.es/supermercado/{}',
+    }
+
     try:
         cur = db._cursor()
-        cur.execute("SELECT url FROM productos WHERE id = ?",
-                    (int(producto_id),))
+        cur.execute(
+            "SELECT url, id_externo, supermercado "
+            "FROM productos WHERE id = ?",
+            (int(producto_id),))
         row = cur.fetchone()
         if row is None:
             return ""
-        # sqlite3.Row soporta acceso por índice [0]
+
+        # 1) Intentar URL almacenada directamente
         url = row[0]
-        if url and isinstance(url, str):
+        if url and isinstance(url, str) and url.strip():
             return url.strip()
+
+        # 2) Fallback: construir URL desde id_externo + supermercado
+        id_externo = row[1]
+        supermercado = row[2]
+        if id_externo and supermercado:
+            patron = _URL_PATTERNS.get(supermercado)
+            if patron:
+                return patron.format(id_externo)
+
         return ""
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).error(
-            "obtener_url_producto(%s): %s", producto_id, e)
+    except Exception:
         return ""
 
 
