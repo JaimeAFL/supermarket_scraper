@@ -423,3 +423,78 @@ def añadir_a_cesta_rapido(producto_id, nombre, supermercado, precio,
         'original_super': None,
         'original_precio': None,
     })
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# CONSULTAR PRODUCTO EN LA WEB
+# ═══════════════════════════════════════════════════════════════════════
+
+def obtener_url_producto(db, producto_id):
+    """Obtiene la URL de un producto desde la BD.
+
+    Returns:
+        str: URL del producto o cadena vacía si no existe.
+    """
+    try:
+        cur = db._cursor()
+        cur.execute("SELECT url FROM productos WHERE id = ?",
+                    (int(producto_id),))
+        row = cur.fetchone()
+        if row:
+            url = row[0] if isinstance(row, (tuple, list)) else row['url']
+            return url.strip() if url else ""
+        return ""
+    except Exception:
+        return ""
+
+
+def boton_consultar_web(url, key_suffix=""):
+    """Renderiza un botón 'Consultar producto en la web'.
+
+    Si la URL está vacía o no existe, muestra el botón deshabilitado.
+
+    Args:
+        url: URL del producto
+        key_suffix: sufijo para la key del botón (evitar duplicados)
+    """
+    if url:
+        st.markdown(
+            f'<a href="{url}" target="_blank" '
+            f'style="display:inline-flex;align-items:center;'
+            f'justify-content:center;gap:8px;width:100%;'
+            f'padding:8px 16px;border:1px solid #E0E4E8;'
+            f'border-radius:8px;background:#FFFFFF;'
+            f'color:#1565C0;text-decoration:none;'
+            f'font-size:14px;font-weight:500;'
+            f'font-family:Inter,sans-serif;cursor:pointer;'
+            f'transition:all 0.2s"'
+            f' onmouseover="this.style.background=\'#E3F2FD\';'
+            f'this.style.borderColor=\'#90CAF9\'"'
+            f' onmouseout="this.style.background=\'#FFFFFF\';'
+            f'this.style.borderColor=\'#E0E4E8\'">'
+            f'<span class="material-icons-outlined" '
+            f'style="font-size:18px">open_in_new</span>'
+            f'Consultar producto en la web</a>',
+            unsafe_allow_html=True)
+    else:
+        st.button("URL no disponible", disabled=True,
+                  key=f"url_na_{key_suffix}",
+                  use_container_width=True)
+
+
+def añadir_lista_favoritos_a_cesta(db):
+    """Añade todos los productos de favoritos a la cesta."""
+    df_favs = db.obtener_favoritos()
+    if df_favs.empty:
+        return 0
+
+    count = 0
+    for _, row in df_favs.iterrows():
+        añadir_a_cesta_rapido(
+            int(row['id']),
+            row.get('nombre', ''),
+            row.get('supermercado', ''),
+            float(row.get('precio', 0)),
+            row.get('formato_normalizado', ''))
+        count += 1
+    return count

@@ -21,7 +21,7 @@ from dashboard.utils.components import (
     encabezado, fila_insights, fila_metricas,
     estado_vacio, barra_filtros,
     badge_html, tarjeta_producto_html,
-    añadir_a_cesta_rapido,
+    añadir_lista_favoritos_a_cesta,
 )
 
 st.set_page_config(page_title="Favoritos", page_icon="", layout="wide")
@@ -127,8 +127,8 @@ def _generar_pdf_favoritos(df_enriquecido):
     pdf.set_auto_page_break(auto=True, margin=20)
 
     if os.path.exists(_DEJAVU):
-        pdf.add_font('DejaVu', '', _DEJAVU)
-        pdf.add_font('DejaVu', 'B', _DEJAVU_B)
+        pdf.add_font('DejaVu', '', _DEJAVU, uni=True)
+        pdf.add_font('DejaVu', 'B', _DEJAVU_B, uni=True)
         font, eur = 'DejaVu', '€'
     else:
         font, eur = 'Helvetica', 'EUR'
@@ -226,22 +226,31 @@ encabezado("Eliminar favoritos", "remove_circle_outline", nivel=3)
 if not df_favs.empty:
     opciones_elim = _construir_opciones_favoritos(df_favs)
 
+    # Eliminar uno
     fav_eliminar = st.selectbox(
         "Selecciona el favorito a eliminar:",
         list(opciones_elim.keys()), key="fav_eliminar")
 
+    confirmar = st.checkbox(
+        "Confirmo que quiero eliminar este favorito",
+        key="fav_confirmar_elim")
     col_elim_uno, col_elim_todos = st.columns(2)
 
     with col_elim_uno:
         if st.button("Eliminar seleccionado", key="fav_btn_elim",
+                      disabled=not confirmar,
                       use_container_width=True):
             db.eliminar_favorito(opciones_elim[fav_eliminar])
             st.success("Eliminado.")
             st.rerun()
 
     with col_elim_todos:
+        confirmar_todos = st.checkbox(
+            "Confirmo eliminar TODOS los favoritos",
+            key="fav_confirmar_elim_todos")
         if st.button("Eliminar todos los favoritos",
                       key="fav_btn_elim_todos",
+                      disabled=not confirmar_todos,
                       use_container_width=True):
             for pid in opciones_elim.values():
                 db.eliminar_favorito(pid)
@@ -274,17 +283,28 @@ if not df_favs.empty:
             ("trending_up", str(subieron), "Subieron"),
         ])
 
-        # ── Descargar PDF de favoritos ────────────────────────────
-        try:
-            pdf_favs = _generar_pdf_favoritos(df_enriquecido)
-            st.download_button(
-                label="Descargar lista de favoritos (PDF)",
-                data=pdf_favs,
-                file_name=f"favoritos_{datetime.now().strftime('%Y%m%d')}.pdf",
-                mime="application/pdf",
-                key="fav_pdf_download")
-        except Exception:
-            pass
+        # ── Descargar PDF / Añadir todo a la cesta ─────────────
+        col_pdf_fav, col_cesta_fav = st.columns(2)
+
+        with col_pdf_fav:
+            try:
+                pdf_favs = _generar_pdf_favoritos(df_enriquecido)
+                st.download_button(
+                    label="Descargar lista de favoritos (PDF)",
+                    data=pdf_favs,
+                    file_name=f"favoritos_{datetime.now().strftime('%Y%m%d')}.pdf",
+                    mime="application/pdf",
+                    key="fav_pdf_download",
+                    use_container_width=True)
+            except Exception:
+                pass
+
+        with col_cesta_fav:
+            if st.button("Añadir lista de favoritos a la cesta",
+                          key="fav_add_all_cesta",
+                          use_container_width=True):
+                n = añadir_lista_favoritos_a_cesta(db)
+                st.success(f"{n} productos añadidos a la cesta.")
 
         # ── Oportunidades destacadas ──────────────────────────────
         df_oportunidades = df_enriquecido[
@@ -305,16 +325,6 @@ if not df_favs.empty:
                         formato=row.get('formato_normalizado', ''),
                         badges_extra=badges),
                     unsafe_allow_html=True)
-                # Botón añadir a la cesta
-                if st.button("Añadir a la cesta",
-                              key=f"fav_op_cesta_{row['id']}",
-                              use_container_width=True):
-                    añadir_a_cesta_rapido(
-                        int(row['id']), row['nombre'],
-                        row['supermercado'],
-                        float(row['precio_actual']),
-                        row.get('formato_normalizado', ''))
-                    st.success(f"Añadido a la cesta: {row['nombre']}")
             st.markdown("---")
 
         # ── Todos los favoritos ───────────────────────────────────
@@ -352,16 +362,6 @@ if not df_favs.empty:
                     formato=row.get('formato_normalizado', ''),
                     badges_extra=badges),
                 unsafe_allow_html=True)
-            # Botón añadir a la cesta en cada tarjeta
-            if st.button("Añadir a la cesta",
-                          key=f"fav_all_cesta_{row['id']}",
-                          use_container_width=True):
-                añadir_a_cesta_rapido(
-                    int(row['id']), row['nombre'],
-                    row['supermercado'],
-                    float(row['precio_actual']),
-                    row.get('formato_normalizado', ''))
-                st.success(f"Añadido a la cesta: {row['nombre']}")
     else:
         estado_vacio(
             "bookmark_border",
