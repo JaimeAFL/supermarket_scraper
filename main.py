@@ -253,7 +253,6 @@ def main():
     df_total = pd.DataFrame()
 
     for nombre, funcion_scraper in scrapers:
-<<<<<<< HEAD
         logger.info("")
         logger.info("-" * 40)
         logger.info(nombre.upper())
@@ -261,9 +260,6 @@ def main():
 
         df = _ejecutar_scraper_con_timeout(nombre, funcion_scraper, logger)
 
-=======
-        df = _ejecutar_scraper_seguro(nombre, funcion_scraper, logger)
->>>>>>> 87a7abd (changes in scrapers fixing bug with timeout)
         resultados[nombre] = len(df)
 
         if not df.empty:
