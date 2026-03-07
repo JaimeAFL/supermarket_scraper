@@ -440,11 +440,17 @@ def obtener_url_producto(db, producto_id):
         cur.execute("SELECT url FROM productos WHERE id = ?",
                     (int(producto_id),))
         row = cur.fetchone()
-        if row:
-            url = row[0] if isinstance(row, (tuple, list)) else row['url']
-            return url.strip() if url else ""
+        if row is None:
+            return ""
+        # sqlite3.Row soporta acceso por índice [0]
+        url = row[0]
+        if url and isinstance(url, str):
+            return url.strip()
         return ""
-    except Exception:
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(
+            "obtener_url_producto(%s): %s", producto_id, e)
         return ""
 
 
