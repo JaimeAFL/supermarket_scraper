@@ -127,7 +127,9 @@ jobs:
   # ── EROSKI (Playwright, ~62 min — el más lento) ──────────────
   eroski:
     runs-on: ubuntu-latest
-    timeout-minutes: 80
+    # Eroski es el scraper más lento y su duración real puede variar
+    # bastante por latencia/bloqueos transitorios del sitio.
+    timeout-minutes: 120
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -145,7 +147,7 @@ jobs:
           echo "CODIGO_POSTAL=${{ secrets.CODIGO_POSTAL }}" >> .env
       - name: Ejecutar Eroski
         run: python run_scraper.py eroski --export-csv export/eroski.csv --skip-db
-        timeout-minutes: 75
+        timeout-minutes: 110
       - uses: actions/upload-artifact@v4
         if: always()
         with:
