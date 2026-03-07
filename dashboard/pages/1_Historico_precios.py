@@ -22,6 +22,7 @@ from dashboard.utils.styles import inyectar_estilos
 from dashboard.utils.components import (
     encabezado, fila_insights, estado_vacio,
     barra_filtros, añadir_a_cesta_rapido,
+    obtener_url_producto, boton_consultar_web,
 )
 
 st.set_page_config(page_title="Histórico de precios", page_icon="", layout="wide")
@@ -75,8 +76,8 @@ if filtros['busqueda']:
             precio_min = df_hist['precio'].min()
             precio_max = df_hist['precio'].max()
 
-            # ── Botones: Añadir a favoritos / Añadir a cesta ─────
-            col_fav, col_cesta, _ = st.columns([1, 1, 2])
+            # ── Botones: Favoritos / Cesta / Consultar web ─────
+            col_fav, col_cesta, col_web = st.columns(3)
 
             # Comprobar si ya está en favoritos
             df_favs = db.obtener_favoritos()
@@ -105,6 +106,10 @@ if filtros['busqueda']:
                         if "(" in seleccion else "",
                         float(precio_actual))
                     st.success(f"Añadido a la cesta: {nombre_prod}")
+
+            with col_web:
+                url_prod = obtener_url_producto(db, producto_id)
+                boton_consultar_web(url_prod, key_suffix="hist")
 
             # ── Insight cards ─────────────────────────────────────
             insights = []
