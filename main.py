@@ -7,13 +7,18 @@ Ejecuta el scraping de todos los supermercados configurados,
 almacena los datos en la base de datos SQLite y genera logs
 de cada ejecución.
 
+Incluye gestión de memoria para entornos con RAM limitada
+(Codespaces, Docker, CI/CD).
+
 Uso:
     python main.py
 """
 
 import os
 import sys
+import gc
 import subprocess
+import signal
 import logging
 from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor, TimeoutError as FuturesTimeoutError
@@ -94,9 +99,7 @@ def setup_logging():
 
 
 def _asegurar_playwright(logger):
-    """
-    Verifica que Playwright esté instalado. Si no, intenta instalarlo.
-    """
+    """Verifica que Playwright esté instalado."""
     try:
         from playwright.sync_api import sync_playwright
         logger.info("Playwright disponible.")
@@ -104,14 +107,89 @@ def _asegurar_playwright(logger):
     except ImportError:
         logger.info("Playwright no encontrado. Instalando...")
         try:
-            subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'playwright', '-q'])
-            subprocess.check_call([sys.executable, '-m', 'playwright', 'install', 'chromium'])
+            subprocess.check_call(
+                [sys.executable, '-m', 'pip', 'install', 'playwright', '-q'])
+            subprocess.check_call(
+                [sys.executable, '-m', 'playwright', 'install', 'chromium'])
             logger.info("Playwright instalado correctamente.")
             return True
         except Exception as e:
             logger.warning("No se pudo instalar Playwright: %s", e)
-            logger.warning("Carrefour, Dia, Alcampo y Eroski no estarán disponibles.")
             return False
+
+
+def _matar_chromium_huerfano(logger):
+    """Mata todos los procesos de Chromium/Chrome que hayan quedado huérfanos.
+
+    Esto es crítico en entornos con RAM limitada: si un scraper crashea
+    sin cerrar el browser, los procesos de Chromium siguen consumiendo
+    memoria y el siguiente scraper no puede arrancar.
+    """
+    try:
+        # Linux (Codespaces, Docker, CI)
+        resultado = subprocess.run(
+            ['pkill', '-f', 'chromium|chrome'],
+            capture_output=True, timeout=5
+        )
+        if resultado.returncode == 0:
+            logger.info("  Procesos de Chromium huérfanos eliminados.")
+    except FileNotFoundError:
+        # Windows o sistema sin pkill
+        try:
+            subprocess.run(
+                ['taskkill', '/F', '/IM', 'chrome.exe'],
+                capture_output=True, timeout=5
+            )
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def _liberar_memoria(logger):
+    """Fuerza la liberación de memoria entre scrapers.
+
+    Combina:
+    1. Garbage collector de Python (libera objetos no referenciados)
+    2. Matar procesos de Chromium huérfanos (libera RAM del SO)
+    """
+    logger.info("  Liberando memoria...")
+    gc.collect()
+    _matar_chromium_huerfano(logger)
+    gc.collect()
+
+
+def _ejecutar_scraper_seguro(nombre, funcion_scraper, logger):
+    """Ejecuta un scraper con protección contra errores y limpieza.
+
+    Si el scraper falla por cualquier razón (timeout, OOM, crash de
+    Chromium), captura el error, limpia la memoria y continúa con
+    el siguiente scraper.
+
+    Returns:
+        pd.DataFrame: resultado del scraper (vacío si falló)
+    """
+    logger.info("")
+    logger.info("-" * 40)
+    logger.info(nombre.upper())
+    logger.info("-" * 40)
+
+    try:
+        df = funcion_scraper()
+        if df is None:
+            df = pd.DataFrame()
+        return df
+    except MemoryError:
+        logger.error(
+            "ERROR DE MEMORIA ejecutando %s. "
+            "El entorno no tiene suficiente RAM.", nombre)
+        return pd.DataFrame()
+    except Exception as e:
+        logger.error("Error ejecutando scraper de %s: %s", nombre, e)
+        return pd.DataFrame()
+    finally:
+        # Siempre limpiar después de cada scraper
+        _liberar_memoria(logger)
 
 
 def main():
@@ -127,13 +205,16 @@ def main():
     logger.info("Project root: %s", _PROJECT_ROOT)
     logger.info("=" * 60)
 
-    # Inicializar base de datos (ruta absoluta desde init_db.py)
+    # Inicializar base de datos
     db_path = inicializar_base_datos()
     logger.info("Base de datos: %s", db_path)
     db = DatabaseManager(db_path)
 
     # Asegurar que Playwright está disponible
     _asegurar_playwright(logger)
+
+    # Limpiar Chromium que pueda haber quedado de ejecuciones anteriores
+    _matar_chromium_huerfano(logger)
 
     # Obtener cookie automática para Dia
     logger.info("")
@@ -146,22 +227,33 @@ def main():
     except Exception as e:
         logger.warning("Error configurando cookies: %s", e)
 
+    # Limpiar Chromium del cookie_manager
+    _liberar_memoria(logger)
+
     # Carpeta de exportación
     os.makedirs('export', exist_ok=True)
 
-    # Scrapers a ejecutar
-    resultados = {}
+    # ── Ejecutar scrapers en orden (API primero, Playwright después) ──
+    # Orden estratégico:
+    # 1. Mercadona (API REST pura, 0 RAM extra, siempre funciona)
+    # 2. Dia (API REST pura, 0 RAM extra)
+    # 3. Carrefour (Playwright, ~2.400 productos, moderado)
+    # 4. Alcampo (Playwright, ~10.000 productos, pesado)
+    # 5. Eroski (Playwright + infinite scroll, el más pesado)
+
     scrapers = [
         ("Mercadona", gestion_mercadona),
-        ("Carrefour", gestion_carrefour),
         ("Dia", gestion_dia),
+        ("Carrefour", gestion_carrefour),
         ("Alcampo", gestion_alcampo),
         ("Eroski", gestion_eroski),
     ]
 
+    resultados = {}
     df_total = pd.DataFrame()
 
     for nombre, funcion_scraper in scrapers:
+<<<<<<< HEAD
         logger.info("")
         logger.info("-" * 40)
         logger.info(nombre.upper())
@@ -169,6 +261,9 @@ def main():
 
         df = _ejecutar_scraper_con_timeout(nombre, funcion_scraper, logger)
 
+=======
+        df = _ejecutar_scraper_seguro(nombre, funcion_scraper, logger)
+>>>>>>> 87a7abd (changes in scrapers fixing bug with timeout)
         resultados[nombre] = len(df)
 
         if not df.empty:
@@ -183,7 +278,11 @@ def main():
             except Exception as e:
                 logger.error("Error guardando %s en DB: %s", nombre, e)
 
-    # Deduplicar: mismo producto en varias categorías
+            # Liberar el DataFrame parcial de memoria
+            del df
+            gc.collect()
+
+    # Deduplicar
     if not df_total.empty:
         antes = len(df_total)
         df_total = df_total.drop_duplicates(
@@ -220,7 +319,7 @@ def main():
     except Exception as e:
         logger.warning("No se pudieron obtener estadísticas: %s", e)
 
-    # Exportar a Excel (backup)
+    # Exportar a Excel
     if not df_total.empty:
         timestamp = datetime.now().strftime("%d%m%Y_%H%M%S")
         filepath = f"export/products_{timestamp}.xlsx"
