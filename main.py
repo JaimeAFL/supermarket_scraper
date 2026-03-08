@@ -46,7 +46,7 @@ SCRAPER_TIMEOUTS = {
     "Dia": int(os.getenv("TIMEOUT_DIA_MIN", "20")) * 60,
     "Alcampo": int(os.getenv("TIMEOUT_ALCAMPO_MIN", "45")) * 60,
     "Eroski": int(os.getenv("TIMEOUT_EROSKI_MIN", "110")) * 60,
-    "Lidl": int(os.getenv("TIMEOUT_LIDL_MIN", "15")) * 60,
+    "Lidl": int(os.getenv("TIMEOUT_LIDL_MIN", "25")) * 60,
 }
 
 
