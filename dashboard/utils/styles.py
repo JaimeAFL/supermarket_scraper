@@ -15,6 +15,7 @@ COLORES_SUPERMERCADO = {
     'Dia':       '#E74C3C',
     'Alcampo':   '#F39C12',
     'Eroski':    '#9B59B6',
+    "Lidl":      "#FFD700",
 }
 
 # Tokens de color del sistema

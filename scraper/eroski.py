@@ -76,7 +76,6 @@ def gestion_eroski():
                     "--disable-dev-shm-usage",
                     "--no-sandbox",
                     "--disable-gpu",
-                    "--single-process",
                 ],
             )
             ctx = browser.new_context(                     

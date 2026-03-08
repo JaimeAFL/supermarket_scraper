@@ -340,7 +340,6 @@ def gestion_carrefour():
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
-                "--single-process",
             ],
         )
         context = browser.new_context(

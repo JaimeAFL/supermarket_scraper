@@ -35,6 +35,7 @@ from scraper.carrefour import gestion_carrefour
 from scraper.dia import gestion_dia
 from scraper.alcampo import gestion_alcampo
 from scraper.eroski import gestion_eroski
+from scraper.lidl import gestion_lidl
 from database.init_db import inicializar_base_datos
 from database.database_db_manager import DatabaseManager
 
@@ -45,6 +46,7 @@ SCRAPER_TIMEOUTS = {
     "Dia": int(os.getenv("TIMEOUT_DIA_MIN", "20")) * 60,
     "Alcampo": int(os.getenv("TIMEOUT_ALCAMPO_MIN", "45")) * 60,
     "Eroski": int(os.getenv("TIMEOUT_EROSKI_MIN", "110")) * 60,
+    "Lidl": int(os.getenv("TIMEOUT_LIDL_MIN", "15")) * 60,
 }
 
 
@@ -247,6 +249,7 @@ def main():
         ("Carrefour", gestion_carrefour),
         ("Alcampo", gestion_alcampo),
         ("Eroski", gestion_eroski),
+        ("Lidl", gestion_lidl),
     ]
 
     resultados = {}
