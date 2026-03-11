@@ -16,8 +16,8 @@ COLORES_SUPERMERCADO = {
     'Dia':       '#E74C3C',
     'Alcampo':   '#F39C12',
     'Eroski':    '#9B59B6',
-    'Consum':    '#00A651',
-    'Condis':    '#E30613',
+    'Consum':    '#E30613',
+    'Condis':    '#CC0000',
 }
 
 _APEX_CDN = "https://cdn.jsdelivr.net/npm/apexcharts@3.49.0/dist/apexcharts.min.js"
