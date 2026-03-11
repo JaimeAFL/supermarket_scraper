@@ -11,7 +11,6 @@ os.environ.setdefault("SUPERMARKET_DB_PATH", _DB_PATH)
 
 import streamlit as st
 import streamlit.components.v1 as components
-import streamlit.components.v1 as components
 import pandas as pd
 from database.database_db_manager import DatabaseManager
 from database.init_db import inicializar_base_datos
@@ -61,60 +60,6 @@ fila_metricas([
 if dias <= 1:
     st.info("Datos de un solo dia. El historico se construye ejecutando "
             "el scraper semanalmente.")
-
-st.markdown("---")
-
-# ── Productos por supermercado (ApexCharts) ───────────────────────────
-components.html(
-    apex_productos_por_supermercado_html(stats),
-    height=360, scrolling=False,
-)
-
-# ── Distribucion de precios (ApexCharts) ──────────────────────────────
-st.markdown("---")
-encabezado("Distribucion de precios", "bar_chart", nivel=3)
-
-supers_disponibles = list(stats.get('productos_por_supermercado', {}).keys())
-if supers_disponibles:
-    super_sel = st.selectbox("Supermercado:", supers_disponibles, key="dist_super")
-
-    @st.cache_data(ttl=300)
-    def _cargar_productos_super(_db, supermercado):
-        return _db.obtener_productos_con_precio_actual(supermercado=supermercado)
-
-    with st.spinner("Cargando datos..."):
-        df_super = _cargar_productos_super(db, super_sel)
-
-    components.html(
-        apex_distribucion_precios_html(df_super, super_sel, completa=False),
-        height=560, scrolling=False,
-    )
-    with st.expander("Ver distribucion completa (incluye precios extremos)"):
-        components.html(
-            apex_distribucion_precios_html(df_super, super_sel, completa=True),
-            height=560, scrolling=False,
-        )
-
-# ── Resumen por supermercado (con Mediana, € en vez de EUR) ──────────
-st.markdown("---")
-encabezado("Resumen por supermercado", "table_chart", nivel=3)
-
-if stats.get('productos_por_supermercado'):
-    datos_tabla = []
-    for supermercado, total in stats['productos_por_supermercado'].items():
-        df_s = db.obtener_productos_con_precio_actual(supermercado=supermercado)
-        if not df_s.empty:
-            datos_tabla.append({
-                'Supermercado': supermercado,
-                'Productos': total,
-                'Precio medio': f"{df_s['precio'].mean():.2f} €",
-                'Mediana': f"{df_s['precio'].median():.2f} €",
-                'Minimo': f"{df_s['precio'].min():.2f} €",
-                'Maximo': f"{df_s['precio'].max():.2f} €",
-            })
-    if datos_tabla:
-        st.dataframe(pd.DataFrame(datos_tabla),
-                     use_container_width=True, hide_index=True)
 
 # ── Busqueda rapida (sin paginacion) ─────────────────────────────────
 st.markdown("---")
@@ -181,6 +126,60 @@ else:
         "Escribe un termino para buscar productos",
         "Puedes filtrar por supermercado y categoria."
     )
+
+st.markdown("---")
+
+components.html(
+    apex_productos_por_supermercado_html(stats),
+    height=360, scrolling=False,
+)
+
+# ── Distribucion de precios (ApexCharts) ──────────────────────────────
+st.markdown("---")
+encabezado("Distribucion de precios", "bar_chart", nivel=3)
+
+supers_disponibles = list(stats.get('productos_por_supermercado', {}).keys())
+if supers_disponibles:
+    super_sel = st.selectbox("Supermercado:", supers_disponibles, key="dist_super")
+
+    @st.cache_data(ttl=300)
+    def _cargar_productos_super(_db, supermercado):
+        return _db.obtener_productos_con_precio_actual(supermercado=supermercado)
+
+    with st.spinner("Cargando datos..."):
+        df_super = _cargar_productos_super(db, super_sel)
+
+    components.html(
+        apex_distribucion_precios_html(df_super, super_sel, completa=False),
+        height=560, scrolling=False,
+    )
+    with st.expander("Ver distribucion completa (incluye precios extremos)"):
+        components.html(
+            apex_distribucion_precios_html(df_super, super_sel, completa=True),
+            height=560, scrolling=False,
+        )
+
+# ── Resumen por supermercado (con Mediana, € en vez de EUR) ──────────
+st.markdown("---")
+encabezado("Resumen por supermercado", "table_chart", nivel=3)
+
+if stats.get('productos_por_supermercado'):
+    datos_tabla = []
+    for supermercado, total in stats['productos_por_supermercado'].items():
+        df_s = db.obtener_productos_con_precio_actual(supermercado=supermercado)
+        if not df_s.empty:
+            datos_tabla.append({
+                'Supermercado': supermercado,
+                'Productos': total,
+                'Precio medio': f"{df_s['precio'].mean():.2f} €",
+                'Mediana': f"{df_s['precio'].median():.2f} €",
+                'Minimo': f"{df_s['precio'].min():.2f} €",
+                'Maximo': f"{df_s['precio'].max():.2f} €",
+            })
+    if datos_tabla:
+        st.dataframe(pd.DataFrame(datos_tabla),
+                     use_container_width=True, hide_index=True)
+
 
 # ── Footer ────────────────────────────────────────────────────────────
 st.markdown("---")
