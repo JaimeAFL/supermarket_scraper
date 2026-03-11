@@ -478,10 +478,11 @@ if cesta:
 
     # Email web — botones con logo del servicio
     st.caption("Enviar por email (abre redacción en webmail):")
-    st.info(
-        "Los proveedores web (Gmail/Outlook/Yahoo) no permiten adjuntar "
-        "un PDF automáticamente desde un enlace por seguridad. "
-        f"Paso recomendado: 1) descarga {nombre_pdf} y 2) adjúntalo manualmente al abrir el correo."
+    st.info("Los proveedores web (Gmail/Outlook/Yahoo) no permiten adjuntar "
+    "un PDF automáticamente desde un enlace por seguridad.\n\n"
+    "Paso recomendado:\n"
+    "1) Descarga la lista de la cesta\n"
+    "2) Adjunta el PDF manualmente al abrir el correo."
     )
 
     enlaces = generar_enlaces_email(cesta)
