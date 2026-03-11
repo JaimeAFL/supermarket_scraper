@@ -481,7 +481,7 @@ if cesta:
     st.info("Los proveedores web (Gmail/Outlook/Yahoo) no permiten adjuntar "
     "un PDF automáticamente desde un enlace por seguridad.\n\n"
     "Paso recomendado:\n"
-    "1) Descarga la lista de la cesta\n"
+    "1) Descarga la lista de la compra\n"
     "2) Adjunta el PDF manualmente al abrir el correo."
     )
 
