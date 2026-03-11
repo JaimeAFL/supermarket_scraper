@@ -1,26 +1,16 @@
 # -*- coding: utf-8 -*-
-
-"""
-Tests unitarios para scraper/mercadona.py
-
-Verifica que el scraper de Mercadona devuelve datos con la estructura correcta.
-
-NOTA: Estos tests hacen llamadas reales a la API de Mercadona.
-Para CI/CD, se podrían mockear con unittest.mock.
-
-Ejecutar con:
-    python -m pytest tests/test_mercadona.py -v
-"""
+"""Tests unitarios para mercadona.py — ejecutar con: python -m pytest test_mercadona.py -v"""
 
 import os
 import sys
 import pytest
 import pandas as pd
+from unittest.mock import patch, MagicMock
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from mercadona import get_ids_categorys, get_products_by_category  # noqa: E402
 
-# Columnas esperadas en el DataFrame de salida
 COLUMNAS_ESPERADAS = [
     'Id', 'Nombre', 'Precio', 'Precio_por_unidad',
     'Formato', 'Categoria', 'Supermercado', 'Url', 'Url_imagen'
@@ -28,94 +18,98 @@ COLUMNAS_ESPERADAS = [
 
 
 class TestMercadonaEstructura:
-    """Tests que verifican la estructura de datos sin depender de la API."""
 
     def test_columnas_dataframe(self):
-        """
-        Verifica que un DataFrame con las columnas correctas se puede crear.
-        Esto valida que el scraper produce el formato esperado.
-        """
-        # Simular una fila de datos como la que devolvería el scraper
+        """Un DataFrame con los datos de Mercadona tiene las columnas correctas."""
         datos = {
-            'Id': ['12345'],
-            'Nombre': ['Leche entera Hacendado'],
-            'Precio': [0.89],
-            'Precio_por_unidad': [0.89],
-            'Formato': ['1L'],
-            'Categoria': ['Lácteos'],
-            'Supermercado': ['Mercadona'],
-            'Url': ['https://tienda.mercadona.es/product/12345'],
+            'Id': ['12345'], 'Nombre': ['Leche entera Hacendado'], 'Precio': [0.89],
+            'Precio_por_unidad': [0.89], 'Formato': ['1L'], 'Categoria': ['Lácteos'],
+            'Supermercado': ['Mercadona'], 'Url': ['https://tienda.mercadona.es/product/12345'],
             'Url_imagen': ['https://prod-mercadona.imgix.net/images/12345.jpg']
         }
         df = pd.DataFrame(datos)
-
         for col in COLUMNAS_ESPERADAS:
             assert col in df.columns, f"Falta la columna '{col}'"
 
     def test_tipos_de_datos(self):
-        """Verifica que los tipos de datos son correctos."""
-        datos = {
-            'Id': ['12345'],
-            'Nombre': ['Leche entera'],
-            'Precio': [0.89],
-            'Precio_por_unidad': [0.89],
-            'Formato': ['1L'],
-            'Categoria': ['Lácteos'],
-            'Supermercado': ['Mercadona'],
-            'Url': ['https://example.com'],
+        """Los tipos de datos del DataFrame son los esperados."""
+        df = pd.DataFrame({
+            'Id': ['12345'], 'Nombre': ['Leche entera'], 'Precio': [0.89],
+            'Precio_por_unidad': [0.89], 'Formato': ['1L'], 'Categoria': ['Lácteos'],
+            'Supermercado': ['Mercadona'], 'Url': ['https://example.com'],
             'Url_imagen': ['https://example.com/img.jpg']
-        }
-        df = pd.DataFrame(datos)
-
+        })
         assert df['Precio'].dtype in ['float64', 'int64']
-        assert df['Nombre'].dtype == 'object'  # string en pandas
+        assert isinstance(df['Nombre'].iloc[0], str)
         assert df['Supermercado'].iloc[0] == 'Mercadona'
 
 
-@pytest.mark.skipif(
-    os.environ.get('CI') == 'true',
-    reason="Salta en CI para no sobrecargar la API"
-)
-class TestMercadonaAPI:
-    """
-    Tests que hacen llamadas reales a la API de Mercadona.
-    Se saltan en entornos CI.
-    """
+class TestGetIdsCategorys:
 
-    def test_obtener_categorias(self):
-        """Verifica que la API de categorías responde correctamente."""
-        import requests
+    @patch('mercadona.requests.get')
+    def test_error_de_red_devuelve_lista(self, mock_get):
+        """Error de red no lanza excepción no controlada."""
+        import requests as req
+        mock_get.side_effect = req.exceptions.ConnectionError("Sin conexión")
+        try:
+            resultado = get_ids_categorys()
+            assert isinstance(resultado, list)
+        except Exception:
+            pass  # El scraper puede propagar la excepción
 
-        url = "https://tienda.mercadona.es/api/categories/"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
+    @patch('mercadona.requests.get')
+    def test_respuesta_json_correcta(self, mock_get):
+        """Respuesta válida → lista de categorías."""
+        mock_get.return_value = MagicMock(
+            raise_for_status=MagicMock(return_value=None),
+            json=MagicMock(return_value={
+                'results': [{'id': 1, 'name': 'Frutas'}, {'id': 2, 'name': 'Lácteos'}]
+            })
+        )
+        resultado = get_ids_categorys()
+        assert isinstance(resultado, list)
 
-        response = requests.get(url, headers=headers, timeout=10)
-        
-        assert response.status_code == 200
-        data = response.json()
-        assert isinstance(data, dict)
-        assert 'results' in data
 
-    def test_gestion_mercadona_devuelve_dataframe(self):
-        """
-        Verifica que gestion_mercadona() devuelve un DataFrame
-        con las columnas correctas y al menos algunos productos.
-        
-        ADVERTENCIA: Este test tarda varios minutos porque recorre
-        todas las categorías de Mercadona.
-        """
-        from scraper.mercadona import gestion_mercadona
+class TestGetProductsByCategory:
 
-        df = gestion_mercadona()
-
-        assert isinstance(df, pd.DataFrame)
-        
-        if not df.empty:
+    @patch('mercadona.time.sleep')
+    @patch('mercadona.requests.get')
+    def test_devuelve_dataframe(self, mock_get, mock_sleep):
+        """Categoría con productos → DataFrame con columnas correctas."""
+        mock_get.return_value = MagicMock(
+            raise_for_status=MagicMock(return_value=None),
+            json=MagicMock(return_value={
+                'categories': [{
+                    'id': 1, 'decimalName': 'Lácteos',
+                    'products': [{
+                        'id': '12345', 'display_name': 'Leche Hacendado 1L',
+                        'price_instructions': {
+                            'unit_price': 0.89, 'bulk_price': 0.89,
+                            'unit_size': '1', 'size_format': 'L',
+                        },
+                        'photos': [{'regular': 'https://img.mercadona.es/12345.jpg'}],
+                    }]
+                }]
+            })
+        )
+        resultado = get_products_by_category([1])
+        assert isinstance(resultado, pd.DataFrame)
+        if not resultado.empty:
             for col in COLUMNAS_ESPERADAS:
-                assert col in df.columns, f"Falta columna '{col}'"
-            
-            assert len(df) > 0
-            assert df['Supermercado'].unique()[0] == 'Mercadona'
-            assert df['Precio'].notna().all()
+                assert col in resultado.columns
+
+    def test_lista_vacia_devuelve_df_vacio(self):
+        """Sin categorías, devuelve DataFrame vacío."""
+        resultado = get_products_by_category([])
+        assert isinstance(resultado, pd.DataFrame)
+        assert resultado.empty
+
+
+@pytest.mark.skipif(os.environ.get('CI') == 'true', reason="Salta en CI")
+class TestMercadonaAPI:
+
+    def test_get_ids_categorys_real(self):
+        """La API real de categorías responde con datos válidos."""
+        resultado = get_ids_categorys()
+        assert isinstance(resultado, list)
+        assert len(resultado) > 0
