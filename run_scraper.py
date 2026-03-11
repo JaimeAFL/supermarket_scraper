@@ -42,7 +42,8 @@ SCRAPERS = {
     "dia":       ("scraper.dia",       "gestion_dia"),
     "alcampo":   ("scraper.alcampo",   "gestion_alcampo"),
     "eroski":    ("scraper.eroski",     "gestion_eroski"),
-    "lidl":      ("scraper.lidl",      "gestion_lidl"),
+    "consum":    ("scraper.consum",    "gestion_consum"),
+    "condis":    ("scraper.condis", "gestion_condis"),
 }
 
 NECESITA_COOKIE = {"dia"}
