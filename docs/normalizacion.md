@@ -1,8 +1,6 @@
 # Motor de normalización de productos
 
-Documentación técnica del sistema de normalización NLP implementado en
-`matching/normalizer.py`. Explica el problema, la solución, los métodos
-usados, la cobertura alcanzada y cómo extender el sistema.
+Documentación técnica del sistema de normalización implementado en `normalizer.py`. Explica el problema que resuelve, los métodos aplicados, la cobertura alcanzada y cómo extender el sistema.
 
 ## Problema
 
@@ -15,30 +13,21 @@ Los supermercados españoles nombran el mismo producto de formas muy distintas:
 | Dia | `Leche entera Dia Láctea pack 6 x 1 L` |
 | Alcampo | `AUCHAN Leche entera de vaca 1 l. Producto Alcampo` |
 | Eroski | `Leche entera del País Vasco EROSKI, brik 1 litro` |
+| Consum | `Leche entera` (marca en campo separado `brand.name`) |
 
 Esto genera dos problemas:
 
-1. **Búsqueda con ruido:** buscar "leche" con `LIKE '%leche%'` devuelve
-   1.067 resultados que incluyen "café con leche", "chocolate con leche",
-   "arroz con leche" y "galletas con leche". Solo 477 son productos lácteos.
+1. **Búsqueda con ruido:** buscar "leche" con `LIKE '%leche%'` devuelve 1.067 resultados que incluyen "café con leche", "chocolate con leche", "arroz con leche" y "galletas con leche". Solo 477 son productos lácteos.
 
-2. **Categorías incompatibles:** cada supermercado usa su propia taxonomía.
-   Mercadona usa IDs numéricos (`112`, `115`), Dia usa rutas URL
-   (`/charcuteria-y-quesos/jamon-cocido/c/L2001`), Alcampo usa texto
-   descriptivo (`Agua, Soda y Gaseosas`), y Eroski usa nombres cortos
-   (`Leche`, `Yogur`). No se pueden comparar directamente.
+2. **Categorías incompatibles:** cada supermercado usa su propia taxonomía. No se pueden comparar directamente entre cadenas.
 
 ## Solución: Método 1 + Método 2
 
-La normalización combina dos técnicas complementarias que se ejecutan
-antes de guardar cada producto en la base de datos.
+La normalización combina dos técnicas que se ejecutan antes de guardar cada producto en la base de datos.
 
 ### Método 1: Reglas de posición por supermercado
 
-Cada supermercado sigue un patrón de naming consistente. El normalizador
-aplica reglas específicas según el supermercado para extraer tres campos:
-**tipo de producto** (qué es), **marca** (quién lo fabrica) y **formato**
-(peso/volumen/unidades).
+Cada supermercado sigue un patrón de naming consistente. El normalizador aplica reglas específicas para extraer **tipo de producto**, **marca** y **formato**.
 
 #### Alcampo: MARCA + tipo + formato
 
@@ -52,34 +41,13 @@ AUCHAN Leche entera de vaca 1 l. Producto Alcampo
                                    ^^^^^^^^^^^^^^^^ → sufijo (se descarta)
 ```
 
-**Implementación:** se recorren las palabras desde el inicio mientras estén
-en MAYÚSCULAS. La primera palabra en minúsculas marca el fin de la marca
-y el inicio del tipo. Un regex elimina el formato del final.
+Se recorren las palabras desde el inicio mientras estén en MAYÚSCULAS. La primera palabra en minúsculas marca el fin de la marca y el inicio del tipo. Un regex elimina el formato del final.
 
-```python
-def _extraer_alcampo(nombre):
-    palabras = nombre.split()
-    i = 0
-    while i < len(palabras):
-        c = palabras[i].strip('.,;:()[]"\'-')
-        if c == c.upper() and len(c) > 0 and not c.isdigit():
-            i += 1
-        else:
-            break
-    marca = " ".join(palabras[:i])
-    resto = " ".join(palabras[i:])
-    tipo = _RE_FORMATO.sub('', resto)  # Quitar "1 l." del final
-    return marca, tipo
-```
-
-**Fiabilidad:** 84% de los productos de Alcampo empiezan con marca en
-MAYÚSCULAS. El 16% restante son productos sin marca reconocida
-(herramientas, electrónica, bazar).
+**Fiabilidad:** 84% de los productos de Alcampo empiezan con marca en MAYÚSCULAS. El 16% restante son productos sin marca reconocida (herramientas, electrónica, bazar).
 
 #### Eroski: tipo + MARCA + , formato
 
-Eroski pone el tipo primero, la marca en MAYÚSCULAS al final de la frase
-principal, y el formato después de una coma:
+Eroski pone el tipo primero, la marca en MAYÚSCULAS al final de la frase principal, y el formato después de una coma:
 
 ```
 Leche entera del País Vasco EROSKI, brik 1 litro
@@ -88,17 +56,13 @@ Leche entera del País Vasco EROSKI, brik 1 litro
                                     ^^^^^^^^^^^^  → formato (después de coma)
 ```
 
-**Implementación:** se parte por la primera coma (tipo+marca | formato).
-Después se recorren las palabras del bloque tipo+marca en orden inverso:
-las que están en MAYÚSCULAS son la marca, el resto es el tipo.
+Se parte por la primera coma (tipo+marca | formato). Después se recorren las palabras del bloque tipo+marca en orden inverso: las que están en MAYÚSCULAS son la marca.
 
-**Fiabilidad:** 100% de los productos de Eroski usan coma como separador
-de formato. La marca en MAYÚSCULAS se detecta en el 92,3% de los productos.
+**Fiabilidad:** 100% de los productos usan coma como separador de formato. Marca detectada en el 92,3%.
 
 #### Mercadona / Carrefour / Dia: tipo + marca (por diccionario)
 
-Estos tres supermercados no tienen un marcador visual consistente para la
-marca. La marca puede ir en cualquier posición y en capitalización mixta:
+Estos tres supermercados no tienen un marcador visual consistente:
 
 ```
 Mercadona:  Leche entera Hacendado
@@ -106,78 +70,44 @@ Carrefour:  Leche entera Carrefour brik 1 l.
 Dia:        Leche entera Dia Láctea pack 6 x 1 L
 ```
 
-**Implementación:** se busca la marca más larga del diccionario que coincida
-dentro del nombre. Todo lo que va antes de la marca es el tipo. Se verifica
-que la coincidencia no sea subcadena de otra palabra (para evitar que "SPECIAL"
-matchee dentro de "ESPECIAL").
+Se busca la marca más larga del diccionario que coincida dentro del nombre. Todo lo que va antes de la marca es el tipo.
 
-```python
-def _extraer_generico(nombre):
-    nombre_upper = nombre.upper()
-    for brand in _MARCAS_SORTED:  # Ordenadas por longitud desc
-        idx = nombre_upper.find(brand.upper())
-        if idx == -1:
-            continue
-        if idx > 0 and nombre_upper[idx - 1].isalpha():
-            continue  # Es subcadena
-        marca = nombre[idx:idx + len(brand)]
-        tipo = nombre[:idx].strip()
-        return marca, tipo
-    return "", nombre  # Sin marca → todo es tipo
-```
+#### Consum: campos separados de la API
+
+Consum devuelve la marca en un campo dedicado (`productData.brand.name`). No se aplica extracción por posición: el campo `brand` se usa directamente como marca, y el nombre completo se usa como tipo de producto.
+
+#### Condis: campos separados de la API (API Empathy)
+
+Condis usa el motor de búsqueda Empathy y también devuelve la marca en un campo dedicado (`brand`). Los nombres vienen en MAYÚSCULAS y se convierten a formato título antes de normalizar. No se aplica extracción por posición ni diccionario.
 
 ### Diccionario de marcas (`marcas.json`)
 
-El diccionario contiene 1.480 marcas y se construyó de forma semi-automática:
+El diccionario contiene 1.480 marcas construidas de forma semi-automática:
 
-1. **Auto-extracción de Alcampo (742 marcas):** como la marca siempre va en
-   MAYÚSCULAS al inicio, se extrajeron todas las secuencias iniciales con ≥2
-   apariciones.
+1. **Auto-extracción de Alcampo (742 marcas):** secuencias iniciales en MAYÚSCULAS con ≥2 apariciones.
+2. **Auto-extracción de Eroski (965 marcas):** secuencias en MAYÚSCULAS antes de la coma.
+3. **Validación cruzada:** 261 marcas aparecen en ambas fuentes.
+4. **Marcas manuales (~40):** marcas blancas multi-palabra no detectables automáticamente (e.g., "Bosque Verde", "Nuestra Alacena", "Central Lechera Asturiana").
+5. **Filtrado de stop-words:** se excluyen palabras funcionales (DE, LA, CON, SIN, PARA, etc.).
 
-2. **Auto-extracción de Eroski (965 marcas):** mismo principio, pero buscando
-   la secuencia de MAYÚSCULAS antes de la coma.
+El diccionario se ordena por longitud descendente para que las marcas multi-palabra matcheen antes que sus componentes ("CARREFOUR CLASSIC" antes que "CARREFOUR").
 
-3. **Validación cruzada:** 261 marcas aparecen en ambos supermercados,
-   confirmando la calidad de la extracción.
-
-4. **Marcas manuales (~40):** marcas blancas multi-palabra que no se detectan
-   automáticamente (e.g., "Bosque Verde", "Nuestra Alacena", "El molino de Dia",
-   "Carrefour El Mercado", "Central Lechera Asturiana").
-
-5. **Filtrado de stop-words:** se excluyen palabras funcionales (DE, LA, CON,
-   SIN, PARA, etc.) que aparecen en MAYÚSCULAS pero no son marcas.
-
-El diccionario se ordena por longitud descendente para que las marcas
-multi-palabra matcheen antes que sus componentes: "CARREFOUR CLASSIC"
-matchea antes que "CARREFOUR".
-
-#### Cómo ampliar el diccionario
-
-Para añadir una marca nueva, editar `matching/marcas.json`:
+Para añadir una marca nueva, editar `marcas.json`:
 
 ```json
-[
-    "...",
-    "NUEVA MARCA",
-    "..."
-]
+["...", "NUEVA MARCA", "..."]
 ```
 
-El orden dentro del JSON no importa (se reordena por longitud al cargar).
-Las marcas se comparan en MAYÚSCULAS, así que `"Nestlé"` matchea
-`"NESTLÉ"` y `"nestlé"`.
+El orden dentro del JSON no importa (se reordena por longitud al cargar). Las marcas se comparan en MAYÚSCULAS.
 
 ### Método 2: Taxonomía de categorías
 
-Una vez extraído el tipo de producto, se clasifica en una categoría
-normalizada mediante coincidencia de prefijos sin acentos.
+Una vez extraído el tipo de producto, se clasifica en una categoría normalizada mediante coincidencia de prefijos sin acentos.
 
-#### Tabla de categorías
-
-| # | Categoría | Prefijos (ejemplos) |
+| # | Categoría | Ejemplos de prefijos |
 |---|---|---|
-| 1 | Lácteos | leche entera, leche semidesnatada, yogur, queso, nata, mantequilla, natillas |
-| 2 | Bebidas | agua mineral, refresco, zumo, bebida de, limonada, horchata |
+| 1 | Lácteos | leche entera, yogur, queso, nata, mantequilla, natillas |
+| 2 | Bebidas | agua mineral, refresco, zumo, bebida de, horchata |
 | 3 | Cervezas | cerveza |
 | 4 | Vinos y licores | vino, cava, sidra, ginebra, vodka, whisky |
 | 5 | Cafés e infusiones | café, cápsulas de café, infusión, té, manzanilla |
@@ -205,33 +135,37 @@ normalizada mediante coincidencia de prefijos sin acentos.
 | 27 | Bebé | pañal, papilla, potito, leche de inicio |
 | 28 | Mascotas | pienso, alimento para perro, arena para gato |
 
-#### Resolución de ambigüedades
+La taxonomía se evalúa en orden: el primer match gana. Esto resuelve ambigüedades como "Café con leche" → Cafés e infusiones (no Lácteos), "Leche de inicio" → Bebé.
 
-La taxonomía se evalúa en orden: el primer match gana. Esto resuelve
-ambigüedades como:
+El 55,8% de productos no recibe categoría normalizada: principalmente electrónica, bricolaje, ropa y bazar de Alcampo. Esto es intencionado: es mejor no categorizar que categorizar mal.
 
-- "Leche de inicio" → matchea "leche de inicio" en Bebé (antes que "leche"
-  en Lácteos) porque Bebé va después pero con prefijos más específicos.
-- "Café con leche" → matchea "café con leche" en Cafés e infusiones
-  (no en Lácteos, porque el tipo empieza por "café").
-- "Chocolate con leche" → matchea "chocolate" en Chocolates y cacao.
+## Normalización de formato y precio unitario
 
-#### Productos sin categoría
+Además del tipo y la marca, cada producto pasa por normalización de formato:
 
-El 55,8% de productos no recibe categoría normalizada. Son principalmente:
+- **Conversiones de unidades:** ml → L, cl → L, g → kg
+- **Extracción de cantidad:** packs, lavados, metros, unidades, docenas
+- **Formatos crudos de Alcampo:** "1000ml", "500" (números solos = gramos)
+- **Formatos de Eroski:** "1 litro", "500 g" (formato nativo, bien estructurado)
+- **Formatos de Consum:** campo `productData.format` ("250 g", "1 L", etc.)
 
-- Electrónica y electrodomésticos (Alcampo vende TVs, lavadoras, etc.)
-- Bricolaje y jardín
-- Ropa y calzado
-- Juguetes
-- Productos de bazar
-- Alimentos con nombres que no empiezan por un prefijo reconocido
+La función `calcular_precio_unitario(precio, formato_normalizado)` devuelve `(float, "€/L" | "€/kg" | "€/ud")` para comparación entre supermercados.
 
-Esto es intencionado: es mejor no categorizar que categorizar mal.
+### Cobertura de formato por supermercado
 
-## Resultado final
+| Supermercado | Cobertura formato | Cobertura precio unitario |
+|---|---|---|
+| Mercadona | 91% | 96% |
+| Carrefour | 91% | 96% |
+| Dia | 91% | 98% |
+| Eroski | 91% | 100% |
+| Alcampo | 72% | 72% |
+| Consum | 95% | 99% |
+| Condis | 92% | 98% |
 
-Cada producto pasa por la función `normalizar_producto()` y obtiene 4 campos:
+Alcampo tiene cobertura menor porque mezcla alimentación con electrónica, bricolaje y ropa, categorías sin formato estándar.
+
+## Resultado completo por producto
 
 ```python
 normalizar_producto(
@@ -259,39 +193,37 @@ normalizar_producto(
 
 ## Cómo se usa en la búsqueda
 
-Cuando el usuario busca "leche" en el dashboard:
+Cuando el usuario busca "leche":
 
 ```sql
 -- Prioridad 1: tipo de producto empieza por "leche"
 SELECT * FROM productos WHERE nombre_normalizado LIKE 'leche%'
--- → Leche entera, Leche desnatada, Leche condensada... (477 resultados)
+-- → 477 resultados: Leche entera, Leche desnatada, Leche condensada...
 
 UNION ALL
 
 -- Prioridad 2: nombre completo contiene "leche"
 SELECT * FROM productos WHERE nombre LIKE '%leche%'
   AND id NOT IN (resultados de prioridad 1)
--- → Café con leche, Chocolate con leche... (590 resultados)
+-- → 590 resultados: Café con leche, Chocolate con leche...
 ```
 
-El dashboard muestra primero los 477 resultados directos. Los 590
-secundarios van en un expander colapsado "Otros productos que mencionan
-leche".
+El dashboard muestra los 477 directos primero. Los 590 secundarios van en un expander colapsado.
 
 ## Métricas de rendimiento
 
 | Métrica | Valor |
 |---|---|
-| Productos totales | 29.872 |
-| Con marca extraída | 21.681 (72,6%) |
-| Con categoría normalizada | 13.205 (44,2%) |
+| Productos totales | ~30.000+ |
+| Con marca extraída | ~72,6% |
+| Con categoría normalizada | ~44,2% |
 | Marcas en diccionario | 1.480 |
 | Categorías definidas | 28 |
-| Tiempo de normalización | ~3 seg (29.872 productos) |
+| Tiempo de normalización | ~3 seg (30.000 productos) |
 
-### Precisión de búsqueda por término
+### Precisión de búsqueda
 
-| Búsqueda | Resultados SQL (`LIKE`) | Resultados por tipo | Ruido eliminado |
+| Búsqueda | Resultados LIKE | Resultados por tipo | Ruido eliminado |
 |---|---|---|---|
 | leche | 1.067 | 477 | 55% |
 | café | 743 | 602 | 19% |
@@ -300,24 +232,11 @@ leche".
 | aceite | 865 | 347 | 60% |
 | chocolate | 1.015 | 364 | 64% |
 
-"Cerveza" tiene poco ruido porque rara vez aparece como ingrediente
-secundario. "Chocolate" y "aceite" tienen mucho ruido porque aparecen
-frecuentemente en nombres compuestos ("galletas de chocolate",
-"conservas en aceite").
-
 ## Edge cases conocidos
 
-1. **"Leche corporal Nivea":** el tipo extraído empieza por "leche" pero
-   es cosmética, no lácteo. Se podría resolver con una lista de exclusión
-   (tipo contiene "corporal", "capilar" → no es alimentación).
-
-2. **"PULEVA Eco Leche desnatada":** en Alcampo, "Eco" queda como parte
-   del tipo ("Eco Leche desnatada") en vez de como sub-marca. No afecta
-   a la búsqueda porque "leche" sigue estando al inicio del tipo.
-
-3. **Marcas no reconocidas:** el 27,4% de productos no tiene marca
-   detectada. Son principalmente marcas pequeñas con <2 apariciones
-   (el umbral mínimo para auto-extracción) o productos genéricos sin marca.
+1. **"Leche corporal Nivea":** empieza por "leche" pero es cosmética. Se podría resolver con lista de exclusión (tipo contiene "corporal", "capilar" → no es alimentación).
+2. **"PULEVA Eco Leche desnatada":** "Eco" queda como parte del tipo en Alcampo. No afecta a la búsqueda porque "leche" sigue apareciendo.
+3. **Marcas no reconocidas:** el 27,4% de productos no tiene marca detectada. Son principalmente marcas pequeñas con <2 apariciones o productos genéricos sin marca.
 
 ## Alternativas consideradas
 

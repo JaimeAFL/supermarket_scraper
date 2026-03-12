@@ -1,77 +1,137 @@
 # Supermarket Price Tracker
 
-Comparador y rastreador de precios de supermercados en España. Extrae datos de las APIs internas de los principales supermercados, normaliza los productos con un motor NLP propio, almacena un histórico de precios en base de datos y ofrece un dashboard interactivo para comparar precios entre cadenas.
+Herramienta que extrae los catálogos completos de los principales supermercados españoles, normaliza los productos automáticamente y ofrece un dashboard interactivo para comparar precios, ver su evolución semanal y guardar favoritos.
 
-## Supermercados soportados
+---
 
-| Supermercado | Estado | Productos | Método | Autenticación |
+## ¿Qué hace esta aplicación?
+
+Cada semana, de forma automática, la aplicación:
+
+1. **Extrae** todos los productos y precios de 7 supermercados
+2. **Normaliza** cada producto: detecta la marca, extrae el tipo de producto ("leche entera", "café molido") y calcula el precio por litro o por kilo para poder comparar de verdad
+3. **Guarda** todo en una base de datos con histórico — así puedes ver si el precio de tu yogur favorito ha subido
+4. **Actualiza** el dashboard, donde puedes buscar cualquier producto y ver al instante dónde está más barato
+
+---
+
+## Supermercados
+
+| Supermercado | Estado | Productos | Método de extracción | Autenticación |
 |---|---|---|---|---|
 | Mercadona | ✅ Funcional | ~4.300 | API REST pública | No requiere |
 | Carrefour | ✅ Funcional | ~2.400 | API REST + Playwright | Cookie de sesión |
-| Dia | ✅ Funcional | ~3.200 | API REST | Cookie automática (Playwright) |
+| Dia | ✅ Funcional | ~3.200 | API REST | Cookie automática |
 | Alcampo | ✅ Funcional | ~10.000 | API REST + Playwright | No requiere |
 | Eroski | ✅ Funcional | ~10.000 | Web scraping + Playwright | No requiere |
+| Consum | ✅ Funcional | ~9.100 | API REST pública | No requiere |
+| Condis | ✅ Funcional | ~5.800 | API REST pública (Empathy) | No requiere |
 
-**Total: ~30.000 productos** con precios actualizados semanalmente.
+**Total: ~45.000 productos** con precios actualizados cada semana.
+
+---
 
 ## Tecnologías
 
-**Extracción:** Python, Requests, Playwright, Pandas
+| Área | Tecnología |
+|---|---|
+| Lenguaje | Python 3.11+ |
+| Extracción | Requests + Playwright (Chromium headless) |
+| Base de datos | SQLite con migración automática de esquema |
+| Dashboard | Streamlit (multi-página) + Plotly |
+| Normalización | Motor NLP propio (reglas + taxonomía) |
+| Matching | RapidFuzz (similitud de texto) |
+| Automatización | GitHub Actions (ejecución paralela semanal) |
+| Tests | pytest |
 
-**Normalización:** Motor NLP propio (reglas de posición + taxonomía de categorías), diccionario de 1.480 marcas auto-extraídas
+---
 
-**Base de datos:** SQLite con migración automática de esquema
+## Características técnicas destacadas
 
-**Dashboard:** Streamlit (multi-página), Plotly
+### Motor de normalización NLP propio
 
-**Automatización:** GitHub Actions con jobs paralelos (5 scrapers simultáneos)
+Cada supermercado nombra los productos de forma distinta. "Leche Semidesnatada Hacendado 1L", "LECHE S/D 1LT HACENDADO" y "Hacendado Leche semidesnatada 1 litro" son el mismo producto. El motor los unifica:
 
-**Matching:** RapidFuzz (similitud de texto) + búsqueda inteligente por tipo de producto
+- **Extracción de tipo de producto**: separa el tipo ("leche semidesnatada") de la marca y el formato mediante reglas de posición específicas por supermercado (Alcampo pone la marca al principio en MAYÚSCULAS; Eroski al final; Mercadona/Carrefour/Dia al final por diccionario).
+- **Diccionario de 1.480 marcas** auto-extraídas de los datos reales de cada supermercado y completadas manualmente.
+- **28 categorías normalizadas** asignadas automáticamente: Lácteos, Bebidas, Cafés e infusiones, Mascotas, etc.
+- **Precio unitario calculado**: convierte cualquier formato (500ml, 1 litro, 250g, 6×33cl...) a €/L o €/kg para que la comparación sea siempre justa.
 
-## Características principales
+### Búsqueda inteligente
 
-- **Búsqueda inteligente:** buscar "leche" devuelve solo lácteos, no "café con leche" ni "chocolate con leche". El motor extrae el tipo de producto y prioriza resultados por relevancia semántica.
-- **Normalización cross-retailer:** cada producto se descompone en tipo, marca y formato independientemente de cómo lo nombre cada supermercado.
-- **28 categorías normalizadas:** desde "Lácteos" hasta "Mascotas", asignadas automáticamente a partir del nombre del producto.
-- **Comparador de precios:** tabla resumen con el más barato por supermercado y diferencias porcentuales.
-- **Histórico de precios:** gráfico temporal por producto con evolución semanal.
-- **Ejecución paralela:** cada scraper corre en un job independiente de GitHub Actions; si uno falla, los demás se guardan igualmente.
+Buscar "leche" devuelve solo lácteos, no "café con leche" ni "chocolate con leche". La búsqueda funciona en dos niveles con `UNION ALL`: primero busca en `tipo_producto` (resultados exactos), luego en el nombre completo (menciones secundarias). Esto reduce el ruido en un 55% respecto a una búsqueda por texto plano.
+
+### Fiabilidad del scraping
+
+Los scrapers de Playwright (Carrefour, Alcampo, Eroski) son los más propensos a fallar por timeouts o procesos Chromium huérfanos. Se implementaron varias soluciones:
+
+- **Limpieza automática de procesos huérfanos** (`pkill`) antes de cada scraper
+- **`gc.collect()`** entre scrapers para liberar RAM (crítico en Codespaces con 4GB)
+- **Timeout duro por scraper** con `ProcessPoolExecutor` y configuración por variable de entorno
+- **Orden de ejecución estratégico**: API-based primero (Mercadona, Dia, Consum, Condis), Playwright después (Carrefour, Alcampo, Eroski)
+- **El flag `--single-process` de Chromium rompe la interceptación de red** — documentado y evitado; solo se usan `--no-sandbox`, `--disable-dev-shm-usage`, `--disable-gpu`
+
+### Base de datos con histórico automático
+
+Upsert por `(nombre, supermercado)`: si el producto ya existe se actualizan sus datos; siempre se inserta un nuevo registro de precio con fecha. La migración de esquema es automática: al arrancar, `init_db.py` detecta columnas faltantes y las crea con `ALTER TABLE`.
+
+### CI/CD con jobs paralelos
+
+Los scrapers corren en paralelo como jobs independientes en GitHub Actions. Si uno falla, los demás se guardan igualmente. El tiempo total pasa de ~96 minutos (secuencial) a ~64 minutos.
+
+```
+Job Mercadona (~30s)   ─┐
+Job Carrefour (~15m)   ─┤
+Job Dia       (~1m)    ─┤
+Job Alcampo   (~17m)   ─┼─→ Merge → DB → git commit
+Job Eroski    (~62m)   ─┤
+Job Consum    (~5m)    ─┤
+Job Condis    (~6m)    ─┘
+```
+
+---
 
 ## Estructura del proyecto
 
 ```
 supermarket_scraper/
 ├── .github/workflows/
-│   └── scraper_semanal.yml       # CI/CD: 5 scrapers en paralelo + merge
+│   └── scraper_semanal.yml       # CI/CD: scrapers en paralelo + merge
 ├── scraper/
-│   ├── mercadona.py              # API pública de Mercadona
-│   ├── carrefour.py              # API de Carrefour (Playwright)
-│   ├── dia.py                    # API de Dia (cookie automática)
-│   ├── alcampo.py                # API de Alcampo (Playwright)
-│   ├── eroski.py                 # Web scraping de Eroski (Playwright)
+│   ├── mercadona.py              # API pública (~4.300 productos)
+│   ├── carrefour.py              # API + Playwright, interceptación de red
+│   ├── dia.py                    # API REST, cookie automática vía Playwright
+│   ├── alcampo.py                # API + Playwright (~10.000 productos)
+│   ├── eroski.py                 # Web scraping + Playwright, scroll infinito
+│   ├── consum.py                 # API REST pública, paginación offset/limit
+│   ├── condis.py                 # API Empathy, browse por categorías (~93)
 │   └── cookie_manager.py         # Gestión y verificación de cookies
 ├── database/
-│   ├── init_db.py                # Schema + migración automática
-│   └── database_db_manager.py    # CRUD con búsqueda inteligente
+│   ├── init_db.py                # Schema + migración automática de columnas
+│   └── database_db_manager.py    # CRUD, búsqueda inteligente, upsert
 ├── matching/
-│   ├── normalizer.py             # Motor NLP: extracción tipo/marca/categoría
+│   ├── normalizer.py             # Motor NLP: tipo / marca / categoría / precio unitario
 │   ├── marcas.json               # Diccionario de 1.480 marcas
-│   └── product_matcher.py        # Matching cross-retailer con rapidfuzz
-├── dashboard/
-│   ├── app.py                    # Página principal + métricas + búsqueda
-│   ├── pages/
-│   │   ├── 1_Historico_precios.py
-│   │   ├── 2_Comparador.py
-│   │   └── 3_Favoritos.py
-│   └── utils/
-│       └── charts.py             # Gráficos Plotly (histogramas, líneas, barras)
-├── main.py                       # Ejecución secuencial (todos los scrapers)
-├── run_scraper.py                # Ejecución individual + export CSV
-├── import_results.py             # Merge de CSVs paralelos → DB
+│   └── product_matcher.py        # Matching cross-retailer con RapidFuzz
+├── app.py                        # Dashboard principal + métricas + búsqueda
+├── 1_Historico_precios.py        # Evolución de precio por producto
+├── 2_Comparador.py               # Comparador por precio unitario entre supermercados
+├── 3_Favoritos.py                # Lista de favoritos con alertas
+├── 4_Cesta.py                    # Cesta de la compra con exportación por email
+├── components.py                 # Helpers compartidos del dashboard
+├── charts.py                     # Gráficos Plotly (histogramas, líneas, barras)
+├── styles.py                     # Estilos CSS del dashboard
+├── export.py                     # Exportación a Excel y generación de enlaces email
+├── main.py                       # Orquestador principal (todos los scrapers)
+├── run_scraper.py                # Ejecución individual + export CSV para CI/CD
+├── import_results.py             # Merge de CSVs paralelos → base de datos
+├── normalizer.py                 # Motor NLP (acceso directo sin módulo)
 ├── requirements.txt
 ├── example.env
 └── README.md
 ```
+
+---
 
 ## Instalación
 
@@ -82,13 +142,13 @@ supermarket_scraper/
 
 ### Pasos
 
-1. Clona el repositorio:
+**1. Clona el repositorio:**
 ```bash
 git clone https://github.com/tu-usuario/supermarket_scraper.git
 cd supermarket_scraper
 ```
 
-2. Crea y activa un entorno virtual:
+**2. Crea y activa un entorno virtual:**
 ```bash
 python -m venv venv
 
@@ -99,124 +159,141 @@ source venv/bin/activate
 venv\Scripts\activate
 ```
 
-3. Instala las dependencias:
+**3. Instala las dependencias:**
 ```bash
 pip install -r requirements.txt
 ```
 
-4. Instala Playwright (necesario para Carrefour, Dia, Alcampo y Eroski):
+**4. Instala Playwright** (necesario para Carrefour, Dia, Alcampo y Eroski):
 ```bash
 playwright install chromium
 playwright install-deps chromium
 ```
 
-5. Configura las cookies:
+**5. Configura las variables de entorno:**
 ```bash
 cp example.env .env
 ```
-Edita el archivo `.env` con tus cookies reales. Consulta la guía en `docs/guia_env.md` para obtenerlas.
+Edita el archivo `.env` si necesitas cookies para Carrefour o Dia. Consulta `guia_env.md` para las instrucciones detalladas.
 
-6. Ejecuta el scraper:
+**6. Inicializa la base de datos:**
 ```bash
-# Todos los supermercados (secuencial)
+python init_db.py
+```
+
+**7. Ejecuta los scrapers:**
+```bash
+# Todos los supermercados
 python main.py
 
 # Un supermercado individual
 python run_scraper.py mercadona
-python run_scraper.py dia
+python run_scraper.py consum
+python run_scraper.py condis
 ```
 
-7. Lanza el dashboard:
+**8. Lanza el dashboard:**
 ```bash
-streamlit run dashboard/app.py
+streamlit run app.py
 ```
+
+---
 
 ## Configuración de cookies
 
-Mercadona, Alcampo y Eroski no necesitan cookies manuales.
+La mayoría de scrapers no necesitan configuración:
 
-- **Dia**: requiere `COOKIE_DIA`, que se intenta obtener automáticamente con Playwright desde `cookie_manager.py`.
-- **Carrefour**: el scraper actual funciona con Playwright e interceptación de respuestas; `COOKIE_CARREFOUR` se mantiene como fallback para flujos legacy/verificación.
+- **Mercadona, Alcampo, Eroski, Consum, Condis**: sin cookies, sin autenticación.
+- **Dia**: `COOKIE_DIA` se obtiene automáticamente con Playwright desde `cookie_manager.py`.
+- **Carrefour**: el scraper usa Playwright con interceptación de red. `COOKIE_CARREFOUR` se mantiene como fallback.
 
-### Codespaces / GitHub Actions
+### En GitHub Actions / Codespaces
 
-En lugar del archivo `.env`, configura las cookies como **Secrets** en tu repositorio de GitHub:
+Configura las cookies como Secrets en tu repositorio:
 
-Settings > Secrets and variables > Actions > New repository secret
+`Settings → Secrets and variables → Actions → New repository secret`
 
-## Cómo funciona
+---
+
+## Cómo funciona internamente
 
 ### 1. Extracción
-Cada scraper llama a la API interna del supermercado, obtiene el árbol de categorías y recorre cada una para extraer todos los productos con sus precios. Devuelve un DataFrame con columnas normalizadas (Id, Nombre, Precio, Formato, Supermercado...).
+
+Cada scraper llama a la API interna o al sitio web del supermercado, recorre todas las categorías y devuelve un DataFrame con columnas normalizadas: `Id`, `Nombre`, `Precio`, `Formato`, `Supermercado`, `Url`, `Url_imagen`.
+
+Los scrapers de Consum y Condis son completamente API-based (solo `requests`), lo que los hace más rápidos y estables que los que necesitan Playwright.
 
 ### 2. Normalización
-Antes de guardar en la base de datos, cada producto pasa por el motor de normalización (`matching/normalizer.py`) que extrae:
-- **Tipo de producto:** lo que el producto ES ("Leche entera", "Café molido")
-- **Marca:** detectada por reglas de posición según el supermercado + diccionario de 1.480 marcas
-- **Categoría normalizada:** clasificación automática en 28 categorías canónicas
+
+Antes de guardar, cada producto pasa por `normalizer.py`:
+
+- Detecta el **tipo de producto** ("leche semidesnatada") separándolo de la marca y del formato
+- Identifica la **marca** por reglas de posición según el supermercado o por diccionario
+- Asigna una **categoría normalizada** de entre 28 categorías canónicas
+- Calcula el **precio unitario** (€/L, €/kg, €/ud) a partir del formato
 
 ### 3. Almacenamiento
-Los datos se guardan en SQLite con upsert: si el producto ya existe se actualizan sus datos, y siempre se inserta un nuevo registro de precio con fecha. Esto construye el histórico automáticamente.
 
-### 4. Búsqueda inteligente
-Las búsquedas del dashboard van primero contra `tipo_producto` (resultados precisos) y después contra el nombre completo (resultados secundarios). Buscar "leche" devuelve primero los lácteos y relega "café con leche" a resultados secundarios.
+Upsert en SQLite: si el producto ya existe (por nombre + supermercado) se actualiza; siempre se añade un nuevo registro de precio con la fecha de hoy. Esto construye el histórico automáticamente sin intervención manual.
 
-### 5. Visualización
-Dashboard Streamlit con 4 vistas: métricas generales, histórico de precios, comparador entre supermercados y favoritos.
+### 4. Visualización
 
-## Ejecución automática (GitHub Actions)
+Dashboard Streamlit con 5 vistas:
 
-El workflow ejecuta los 5 scrapers en **paralelo** como jobs independientes:
+- **Principal**: métricas globales, buscador, distribución de precios por categoría
+- **Histórico**: evolución semanal del precio de cualquier producto
+- **Comparador**: tabla con el precio más barato por supermercado y diferencias porcentuales
+- **Favoritos**: lista guardada con seguimiento de precios
+- **Cesta**: selección de productos con exportación por email (Gmail, Outlook, Yahoo)
 
-```
-Job Mercadona (~30s)  ─┐
-Job Carrefour (~15m)  ─┤
-Job Dia       (~1m)   ─┼─→ Merge → DB → git commit
-Job Alcampo   (~17m)  ─┤
-Job Eroski    (~62m)  ─┘
-```
+---
 
-Cada job exporta un CSV. El job final descarga todos los CSVs, los importa en la base de datos con normalización, y hace commit automático. Si un scraper falla, los demás se guardan igualmente.
+## Ejecución automática
 
-Se ejecuta automáticamente cada lunes a las 7:00 AM (hora española). También se puede lanzar manualmente desde la pestaña Actions del repositorio.
+El workflow de GitHub Actions se dispara cada lunes a las 7:00 AM (hora española) y también puede lanzarse manualmente desde la pestaña Actions.
 
-## Documentación adicional
+Cada scraper corre como job independiente con `continue-on-error: true`. El job final descarga todos los CSVs, los importa en la base de datos con normalización completa, y hace commit automático con los datos actualizados.
 
-- `docs/arquitectura.md`: arquitectura técnica y flujo de datos.
-- `docs/api_supermercados.md`: estrategia de extracción por supermercado.
-- `docs/normalizacion.md`: motor de normalización (tipo, marca, formato, categoría).
-- `docs/ci_cd.md`: pipeline semanal en GitHub Actions.
-- `docs/guia_env.md`: configuración de variables de entorno.
-- `docs/CHANGELOG.md`: historial de cambios.
+---
 
 ## Roadmap
 
-- [x] Scraper de Mercadona
-- [x] Scraper de Carrefour
-- [x] Scraper de Dia
-- [x] Scraper de Alcampo
-- [x] Scraper de Eroski
-- [x] GitHub Actions para ejecución semanal
-- [x] Jobs paralelos en CI/CD
-- [x] Sistema de logging
-- [x] Base de datos SQLite con histórico
-- [x] Motor de normalización NLP (tipo + marca + categoría)
-- [x] Diccionario de marcas auto-extraído (1.480 marcas)
+- [x] Scrapers: Mercadona, Carrefour, Dia, Alcampo, Eroski
+- [x] Scrapers: Consum, Condis
+- [x] Motor de normalización NLP (tipo + marca + categoría + precio unitario)
+- [x] Diccionario de 1.480 marcas
 - [x] 28 categorías normalizadas
 - [x] Búsqueda inteligente por tipo de producto
-- [x] Sistema de equivalencias entre productos
-- [x] Dashboard con Streamlit
-- [x] Gráficos de evolución de precios con Plotly
-- [x] Comparador entre supermercados
+- [x] Base de datos SQLite con histórico automático
+- [x] Dashboard Streamlit (5 páginas)
+- [x] Comparador por precio unitario (€/L, €/kg)
 - [x] Sistema de favoritos
-- [ ] Alertas de bajadas de precio
-- [ ] Exportación de informes a Excel/PDF
+- [x] Cesta de la compra con exportación por email
+- [x] GitHub Actions con jobs paralelos
+- [x] Sistema de logging por ejecución
+- [x] Gestión de procesos Chromium huérfanos
+- [x] Timeouts configurables por scraper
+- [ ] Scraper de Lidl (bloqueado: API devuelve subconjunto incompleto)
+- [ ] Alertas automáticas de bajadas de precio
 - [ ] API REST para consultas externas
+
+---
+
+## Documentación adicional
+
+- `arquitectura.md`: arquitectura técnica y flujo de datos
+- `api_supermercados.md`: estrategia de extracción por supermercado
+- `normalizacion.md`: motor de normalización (tipo, marca, formato, categoría)
+- `ci_cd.md`: pipeline semanal en GitHub Actions
+- `guia_env.md`: configuración de variables de entorno
+- `CHANGELOG.md`: historial de cambios versión a versión
+
+---
 
 ## Licencia
 
-Este proyecto está bajo la licencia MIT. Consulta el archivo `LICENSE` para más detalles.
+MIT. Consulta el archivo `LICENSE` para más detalles.
 
 ## Disclaimer
 
-Este proyecto es exclusivamente educativo y de uso personal. Los datos extraídos son de acceso público. Consulta los términos de uso de cada supermercado antes de usar esta herramienta. Se recomienda usar pausas entre peticiones para no sobrecargar los servidores.
+Proyecto educativo y de uso personal. Los datos extraídos son de acceso público. Consulta los términos de uso de cada supermercado antes de usar esta herramienta. Se recomienda usar pausas entre peticiones para no sobrecargar los servidores.
