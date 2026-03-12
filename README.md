@@ -3,6 +3,11 @@
 Herramienta que extrae los catálogos completos de los principales supermercados españoles, normaliza los productos automáticamente y ofrece un dashboard interactivo para comparar precios, ver su evolución semanal y guardar favoritos.
 
 ---
+## Enlace a la aplicación
+
+https://supermarketscraper-fwx9ryfjofnhpu2jyq6bnt.streamlit.app/ 
+
+---
 
 ## ¿Qué hace esta aplicación?
 
@@ -12,6 +17,39 @@ Cada semana, de forma automática, la aplicación:
 2. **Normaliza** cada producto: detecta la marca, extrae el tipo de producto ("leche entera", "café molido") y calcula el precio por litro o por kilo para poder comparar de verdad
 3. **Guarda** todo en una base de datos con histórico — así puedes ver si el precio de tu yogur favorito ha subido
 4. **Actualiza** el dashboard, donde puedes buscar cualquier producto y ver al instante dónde está más barato
+
+---
+
+## Cómo funciona internamente
+
+### 1. Extracción
+
+Cada scraper llama a la API interna o al sitio web del supermercado, recorre todas las categorías y devuelve un DataFrame con columnas normalizadas: `Id`, `Nombre`, `Precio`, `Formato`, `Supermercado`, `Url`, `Url_imagen`.
+
+Los scrapers de Consum y Condis son completamente API-based (solo `requests`), lo que los hace más rápidos y estables que los que necesitan Playwright.
+
+### 2. Normalización
+
+Antes de guardar, cada producto pasa por `normalizer.py`:
+
+- Detecta el **tipo de producto** ("leche semidesnatada") separándolo de la marca y del formato
+- Identifica la **marca** por reglas de posición según el supermercado o por diccionario
+- Asigna una **categoría normalizada** de entre 28 categorías canónicas
+- Calcula el **precio unitario** (€/L, €/kg, €/ud) a partir del formato
+
+### 3. Almacenamiento
+
+Upsert en SQLite: si el producto ya existe (por nombre + supermercado) se actualiza; siempre se añade un nuevo registro de precio con la fecha de hoy. Esto construye el histórico automáticamente sin intervención manual.
+
+### 4. Visualización
+
+Dashboard Streamlit con 5 vistas:
+
+- **Principal**: métricas globales, buscador, distribución de precios por categoría
+- **Histórico**: evolución semanal del precio de cualquier producto
+- **Comparador**: tabla con el precio más barato por supermercado y diferencias porcentuales
+- **Favoritos**: lista guardada con seguimiento de precios
+- **Cesta**: selección de productos con exportación por email (Gmail, Outlook, Yahoo)
 
 ---
 
@@ -28,6 +66,73 @@ Cada semana, de forma automática, la aplicación:
 | Condis | ✅ Funcional | ~5.800 | API REST pública (Empathy) | No requiere |
 
 **Total: ~45.000 productos** con precios actualizados cada semana.
+
+---
+
+## Roadmap
+
+- [x] Scrapers: Mercadona, Carrefour, Dia, Alcampo, Eroski
+- [x] Scrapers: Consum, Condis
+- [x] Motor de normalización NLP (tipo + marca + categoría + precio unitario)
+- [x] Diccionario de 1.480 marcas
+- [x] 28 categorías normalizadas
+- [x] Búsqueda inteligente por tipo de producto
+- [x] Base de datos SQLite con histórico automático
+- [x] Dashboard Streamlit (5 páginas)
+- [x] Comparador por precio unitario (€/L, €/kg)
+- [x] Sistema de favoritos
+- [x] Cesta de la compra con exportación por email
+- [x] GitHub Actions con jobs paralelos
+- [x] Sistema de logging por ejecución
+- [x] Gestión de procesos Chromium huérfanos
+- [x] Timeouts configurables por scraper
+- [ ] API REST para consultas externas
+
+---
+
+## Estructura del proyecto
+
+```
+supermarket_scraper/
+├── .github/workflows/
+│   └── scraper_semanal.yml       # CI/CD: scrapers en paralelo + merge
+├── scraper/
+│   ├── mercadona.py              # API pública (~4.300 productos)
+│   ├── carrefour.py              # API + Playwright, interceptación de red
+│   ├── dia.py                    # API REST, cookie automática vía Playwright
+│   ├── alcampo.py                # API + Playwright (~10.000 productos)
+│   ├── eroski.py                 # Web scraping + Playwright, scroll infinito
+│   ├── consum.py                 # API REST pública, paginación offset/limit
+│   ├── condis.py                 # API Empathy, browse por categorías (~93)
+│   └── cookie_manager.py         # Gestión y verificación de cookies
+├── database/
+│   ├── init_db.py                # Schema + migración automática de columnas
+│   └── database_db_manager.py    # CRUD, búsqueda inteligente, upsert
+├── matching/
+│   ├── normalizer.py             # Motor NLP: tipo / marca / categoría / precio unitario
+│   ├── marcas.json               # Diccionario de 1.480 marcas
+│   └── product_matcher.py        # Matching cross-retailer con RapidFuzz
+├── dashboard/
+│   ├──app.py                     # Dashboard principal + métricas + búsqueda
+│   ├──pages/
+│   │  ├── 1_Historico_precios.py        # Evolución de precio por producto
+│   │  ├── 2_Comparador.py               # Comparador por precio unitario entre supermercados
+│   │  ├── 3_Favoritos.py                # Lista de favoritos con alertas
+│   │  └── 4_Cesta.py                    # Cesta de la compra con exportación por email
+│   └──utils/
+│      ├── components.py                 # Helpers compartidos del dashboard
+│      ├── charts.py                     # Gráficos Plotly (histogramas, líneas, barras)
+│      ├── styles.py                     # Estilos CSS del dashboard
+│      └── export.py                     # Exportación a Excel y generación de enlaces email
+│
+├── main.py                       # Orquestador principal (todos los scrapers)
+├── run_scraper.py                # Ejecución individual + export CSV para CI/CD
+├── import_results.py             # Merge de CSVs paralelos → base de datos
+├── normalizer.py                 # Motor NLP (acceso directo sin módulo)
+├── requirements.txt
+├── example.env
+└── README.md
+```
 
 ---
 
@@ -87,48 +192,6 @@ Job Alcampo   (~17m)   ─┼─→ Merge → DB → git commit
 Job Eroski    (~62m)   ─┤
 Job Consum    (~5m)    ─┤
 Job Condis    (~6m)    ─┘
-```
-
----
-
-## Estructura del proyecto
-
-```
-supermarket_scraper/
-├── .github/workflows/
-│   └── scraper_semanal.yml       # CI/CD: scrapers en paralelo + merge
-├── scraper/
-│   ├── mercadona.py              # API pública (~4.300 productos)
-│   ├── carrefour.py              # API + Playwright, interceptación de red
-│   ├── dia.py                    # API REST, cookie automática vía Playwright
-│   ├── alcampo.py                # API + Playwright (~10.000 productos)
-│   ├── eroski.py                 # Web scraping + Playwright, scroll infinito
-│   ├── consum.py                 # API REST pública, paginación offset/limit
-│   ├── condis.py                 # API Empathy, browse por categorías (~93)
-│   └── cookie_manager.py         # Gestión y verificación de cookies
-├── database/
-│   ├── init_db.py                # Schema + migración automática de columnas
-│   └── database_db_manager.py    # CRUD, búsqueda inteligente, upsert
-├── matching/
-│   ├── normalizer.py             # Motor NLP: tipo / marca / categoría / precio unitario
-│   ├── marcas.json               # Diccionario de 1.480 marcas
-│   └── product_matcher.py        # Matching cross-retailer con RapidFuzz
-├── app.py                        # Dashboard principal + métricas + búsqueda
-├── 1_Historico_precios.py        # Evolución de precio por producto
-├── 2_Comparador.py               # Comparador por precio unitario entre supermercados
-├── 3_Favoritos.py                # Lista de favoritos con alertas
-├── 4_Cesta.py                    # Cesta de la compra con exportación por email
-├── components.py                 # Helpers compartidos del dashboard
-├── charts.py                     # Gráficos Plotly (histogramas, líneas, barras)
-├── styles.py                     # Estilos CSS del dashboard
-├── export.py                     # Exportación a Excel y generación de enlaces email
-├── main.py                       # Orquestador principal (todos los scrapers)
-├── run_scraper.py                # Ejecución individual + export CSV para CI/CD
-├── import_results.py             # Merge de CSVs paralelos → base de datos
-├── normalizer.py                 # Motor NLP (acceso directo sin módulo)
-├── requirements.txt
-├── example.env
-└── README.md
 ```
 
 ---
@@ -215,67 +278,11 @@ Configura las cookies como Secrets en tu repositorio:
 
 ---
 
-## Cómo funciona internamente
-
-### 1. Extracción
-
-Cada scraper llama a la API interna o al sitio web del supermercado, recorre todas las categorías y devuelve un DataFrame con columnas normalizadas: `Id`, `Nombre`, `Precio`, `Formato`, `Supermercado`, `Url`, `Url_imagen`.
-
-Los scrapers de Consum y Condis son completamente API-based (solo `requests`), lo que los hace más rápidos y estables que los que necesitan Playwright.
-
-### 2. Normalización
-
-Antes de guardar, cada producto pasa por `normalizer.py`:
-
-- Detecta el **tipo de producto** ("leche semidesnatada") separándolo de la marca y del formato
-- Identifica la **marca** por reglas de posición según el supermercado o por diccionario
-- Asigna una **categoría normalizada** de entre 28 categorías canónicas
-- Calcula el **precio unitario** (€/L, €/kg, €/ud) a partir del formato
-
-### 3. Almacenamiento
-
-Upsert en SQLite: si el producto ya existe (por nombre + supermercado) se actualiza; siempre se añade un nuevo registro de precio con la fecha de hoy. Esto construye el histórico automáticamente sin intervención manual.
-
-### 4. Visualización
-
-Dashboard Streamlit con 5 vistas:
-
-- **Principal**: métricas globales, buscador, distribución de precios por categoría
-- **Histórico**: evolución semanal del precio de cualquier producto
-- **Comparador**: tabla con el precio más barato por supermercado y diferencias porcentuales
-- **Favoritos**: lista guardada con seguimiento de precios
-- **Cesta**: selección de productos con exportación por email (Gmail, Outlook, Yahoo)
-
----
-
 ## Ejecución automática
 
 El workflow de GitHub Actions se dispara cada lunes a las 7:00 AM (hora española) y también puede lanzarse manualmente desde la pestaña Actions.
 
 Cada scraper corre como job independiente con `continue-on-error: true`. El job final descarga todos los CSVs, los importa en la base de datos con normalización completa, y hace commit automático con los datos actualizados.
-
----
-
-## Roadmap
-
-- [x] Scrapers: Mercadona, Carrefour, Dia, Alcampo, Eroski
-- [x] Scrapers: Consum, Condis
-- [x] Motor de normalización NLP (tipo + marca + categoría + precio unitario)
-- [x] Diccionario de 1.480 marcas
-- [x] 28 categorías normalizadas
-- [x] Búsqueda inteligente por tipo de producto
-- [x] Base de datos SQLite con histórico automático
-- [x] Dashboard Streamlit (5 páginas)
-- [x] Comparador por precio unitario (€/L, €/kg)
-- [x] Sistema de favoritos
-- [x] Cesta de la compra con exportación por email
-- [x] GitHub Actions con jobs paralelos
-- [x] Sistema de logging por ejecución
-- [x] Gestión de procesos Chromium huérfanos
-- [x] Timeouts configurables por scraper
-- [ ] Scraper de Lidl (bloqueado: API devuelve subconjunto incompleto)
-- [ ] Alertas automáticas de bajadas de precio
-- [ ] API REST para consultas externas
 
 ---
 
