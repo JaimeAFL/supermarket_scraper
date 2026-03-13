@@ -29,10 +29,10 @@ inyectar_estilos()
 
 @st.cache_resource
 def _init_db():
+    inicializar_base_datos()
+    return DatabaseManager()
 
-_init_db()
-
-    st.stop()
+db = _init_db()
 
 st.title("Supermarket Price Tracker")
 st.markdown("Comparador de precios de supermercados espanoles con historico semanal.")
