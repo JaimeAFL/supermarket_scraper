@@ -5,7 +5,7 @@ Herramienta que extrae los catálogos completos de los principales supermercados
 ---
 ## Enlace a la aplicación
 
-https://supermarketscraper-fwx9ryfjofnhpu2jyq6bnt.streamlit.app/ 
+https://supermarketscraper-fwx9ryfjofnhpu2jyq6bnt.streamlit.app/
 
 ---
 
@@ -39,7 +39,7 @@ Antes de guardar, cada producto pasa por `normalizer.py`:
 
 ### 3. Almacenamiento
 
-Upsert en SQLite: si el producto ya existe (por nombre + supermercado) se actualiza; siempre se añade un nuevo registro de precio con la fecha de hoy. Esto construye el histórico automáticamente sin intervención manual.
+Upsert en PostgreSQL: si el producto ya existe (por id externo + supermercado) se actualiza; siempre se añade un nuevo registro de precio con la fecha de hoy. Esto construye el histórico automáticamente sin intervención manual. La base de datos está alojada en Aiden y no se almacena en el repositorio.
 
 ### 4. Visualización
 
@@ -77,7 +77,7 @@ Dashboard Streamlit con 5 vistas:
 - [x] Diccionario de 1.480 marcas
 - [x] 28 categorías normalizadas
 - [x] Búsqueda inteligente por tipo de producto
-- [x] Base de datos SQLite con histórico automático
+- [x] Base de datos PostgreSQL con histórico automático
 - [x] Dashboard Streamlit (5 páginas)
 - [x] Comparador por precio unitario (€/L, €/kg)
 - [x] Sistema de favoritos
@@ -86,6 +86,7 @@ Dashboard Streamlit con 5 vistas:
 - [x] Sistema de logging por ejecución
 - [x] Gestión de procesos Chromium huérfanos
 - [x] Timeouts configurables por scraper
+- [x] Migración de SQLite a PostgreSQL (Aiden)
 - [ ] API REST para consultas externas
 
 ---
@@ -95,7 +96,7 @@ Dashboard Streamlit con 5 vistas:
 ```
 supermarket_scraper/
 ├── .github/workflows/
-│   └── scraper_semanal.yml       # CI/CD: scrapers en paralelo + merge
+│   └── scraper_semanal.yml       # CI/CD: scrapers en paralelo + merge a PostgreSQL
 ├── scraper/
 │   ├── mercadona.py              # API pública (~4.300 productos)
 │   ├── carrefour.py              # API + Playwright, interceptación de red
@@ -113,22 +114,21 @@ supermarket_scraper/
 │   ├── marcas.json               # Diccionario de 1.480 marcas
 │   └── product_matcher.py        # Matching cross-retailer con RapidFuzz
 ├── dashboard/
-│   ├──app.py                     # Dashboard principal + métricas + búsqueda
-│   ├──pages/
-│   │  ├── 1_Historico_precios.py        # Evolución de precio por producto
-│   │  ├── 2_Comparador.py               # Comparador por precio unitario entre supermercados
-│   │  ├── 3_Favoritos.py                # Lista de favoritos con alertas
-│   │  └── 4_Cesta.py                    # Cesta de la compra con exportación por email
-│   └──utils/
-│      ├── components.py                 # Helpers compartidos del dashboard
-│      ├── charts.py                     # Gráficos Plotly (histogramas, líneas, barras)
-│      ├── styles.py                     # Estilos CSS del dashboard
-│      └── export.py                     # Exportación a Excel y generación de enlaces email
+│   ├── app.py                    # Dashboard principal + métricas + búsqueda
+│   ├── pages/
+│   │   ├── 1_Historico_precios.py        # Evolución de precio por producto
+│   │   ├── 2_Comparador.py               # Comparador por precio unitario entre supermercados
+│   │   ├── 3_Favoritos.py                # Lista de favoritos con alertas
+│   │   └── 4_Cesta.py                    # Cesta de la compra con exportación por email
+│   └── utils/
+│       ├── components.py                 # Helpers compartidos del dashboard
+│       ├── charts.py                     # Gráficos Plotly (histogramas, líneas, barras)
+│       ├── styles.py                     # Estilos CSS del dashboard
+│       └── export.py                     # Generación de enlaces email
 │
 ├── main.py                       # Orquestador principal (todos los scrapers)
 ├── run_scraper.py                # Ejecución individual + export CSV para CI/CD
 ├── import_results.py             # Merge de CSVs paralelos → base de datos
-├── normalizer.py                 # Motor NLP (acceso directo sin módulo)
 ├── requirements.txt
 ├── example.env
 └── README.md
@@ -142,7 +142,7 @@ supermarket_scraper/
 |---|---|
 | Lenguaje | Python 3.11+ |
 | Extracción | Requests + Playwright (Chromium headless) |
-| Base de datos | SQLite con migración automática de esquema |
+| Base de datos | PostgreSQL (Aiden) |
 | Dashboard | Streamlit (multi-página) + Plotly |
 | Normalización | Motor NLP propio (reglas + taxonomía) |
 | Matching | RapidFuzz (similitud de texto) |
@@ -178,17 +178,17 @@ Los scrapers de Playwright (Carrefour, Alcampo, Eroski) son los más propensos a
 
 ### Base de datos con histórico automático
 
-Upsert por `(nombre, supermercado)`: si el producto ya existe se actualizan sus datos; siempre se inserta un nuevo registro de precio con fecha. La migración de esquema es automática: al arrancar, `init_db.py` detecta columnas faltantes y las crea con `ALTER TABLE`.
+Upsert por `(id_externo, supermercado)`: si el producto ya existe se actualizan sus datos; siempre se inserta un nuevo registro de precio con fecha. La base de datos es PostgreSQL alojada en Aiden: persiste independientemente del pipeline de CI/CD y no se versiona en el repositorio.
 
 ### CI/CD con jobs paralelos
 
-Los scrapers corren en paralelo como jobs independientes en GitHub Actions. Si uno falla, los demás se guardan igualmente. El tiempo total pasa de ~96 minutos (secuencial) a ~64 minutos.
+Los scrapers corren en paralelo como jobs independientes en GitHub Actions. Si uno falla, los demás se guardan igualmente. El job de merge importa todos los CSVs directamente a PostgreSQL sin hacer commit de base de datos al repositorio.
 
 ```
 Job Mercadona (~30s)   ─┐
 Job Carrefour (~15m)   ─┤
 Job Dia       (~1m)    ─┤
-Job Alcampo   (~17m)   ─┼─→ Merge → DB → git commit
+Job Alcampo   (~17m)   ─┼─→ Merge → PostgreSQL (Aiden)
 Job Eroski    (~62m)   ─┤
 Job Consum    (~5m)    ─┤
 Job Condis    (~6m)    ─┘
@@ -202,6 +202,7 @@ Job Condis    (~6m)    ─┘
 
 - Python 3.9 o superior
 - Git
+- Acceso a la instancia PostgreSQL (variable `DATABASE_URL`)
 
 ### Pasos
 
@@ -237,11 +238,11 @@ playwright install-deps chromium
 ```bash
 cp example.env .env
 ```
-Edita el archivo `.env` si necesitas cookies para Carrefour o Dia. Consulta `guia_env.md` para las instrucciones detalladas.
+Edita el archivo `.env` y añade tu `DATABASE_URL`. Consulta `docs/guia_env.md` para las instrucciones detalladas.
 
 **6. Inicializa la base de datos:**
 ```bash
-python init_db.py
+python database/init_db.py
 ```
 
 **7. Ejecuta los scrapers:**
@@ -257,7 +258,7 @@ python run_scraper.py condis
 
 **8. Lanza el dashboard:**
 ```bash
-streamlit run app.py
+streamlit run dashboard/app.py
 ```
 
 ---
@@ -272,7 +273,7 @@ La mayoría de scrapers no necesitan configuración:
 
 ### En GitHub Actions / Codespaces
 
-Configura las cookies como Secrets en tu repositorio:
+Configura las variables como Secrets en tu repositorio:
 
 `Settings → Secrets and variables → Actions → New repository secret`
 
@@ -282,18 +283,18 @@ Configura las cookies como Secrets en tu repositorio:
 
 El workflow de GitHub Actions se dispara cada lunes a las 7:00 AM (hora española) y también puede lanzarse manualmente desde la pestaña Actions.
 
-Cada scraper corre como job independiente con `continue-on-error: true`. El job final descarga todos los CSVs, los importa en la base de datos con normalización completa, y hace commit automático con los datos actualizados.
+Cada scraper corre como job independiente con `continue-on-error: true`. El job final descarga todos los CSVs e importa los datos directamente en PostgreSQL con normalización completa.
 
 ---
 
 ## Documentación adicional
 
-- `arquitectura.md`: arquitectura técnica y flujo de datos
-- `api_supermercados.md`: estrategia de extracción por supermercado
-- `normalizacion.md`: motor de normalización (tipo, marca, formato, categoría)
-- `ci_cd.md`: pipeline semanal en GitHub Actions
-- `guia_env.md`: configuración de variables de entorno
-- `CHANGELOG.md`: historial de cambios versión a versión
+- `docs/arquitectura.md`: arquitectura técnica y flujo de datos
+- `docs/api_supermercados.md`: estrategia de extracción por supermercado
+- `docs/normalizacion.md`: motor de normalización (tipo, marca, formato, categoría)
+- `docs/ci_cd.md`: pipeline semanal en GitHub Actions
+- `docs/guia_env.md`: configuración de variables de entorno
+- `docs/CHANGELOG.md`: historial de cambios versión a versión
 
 ---
 

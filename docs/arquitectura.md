@@ -24,7 +24,7 @@ Documento técnico que explica cómo funciona internamente el proyecto Supermark
 │                    Precio unitario: €/L, €/kg, €/ud                  │
 ├──────────────────────────────────────────────────────────────────────┤
 │                    database_db_manager.py                             │
-│                    SQLite + búsqueda inteligente por tipo_producto    │
+│                    PostgreSQL (Aiden) + búsqueda inteligente          │
 │                    Fallback de URL por id_externo + patrón conocido   │
 ├──────────────────────────────────────────────────────────────────────┤
 │                    product_matcher.py                                 │
@@ -32,7 +32,7 @@ Documento técnico que explica cómo funciona internamente el proyecto Supermark
 ├──────────────────────────────────────────────────────────────────────┤
 │                    app.py (Streamlit)                                 │
 │                    5 vistas: métricas, histórico, comparador,        │
-│                    favoritos, cesta con exportación PDF/email         │
+│                    favoritos, cesta con exportación email             │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -43,11 +43,10 @@ El proyecto usa una estructura plana en la raíz: los scrapers, el dashboard y l
 ```
 supermarket_scraper/
 ├── .github/workflows/
-│   └── scraper_semanal.yml       # CI/CD: scrapers en paralelo + merge
+│   └── scraper_semanal.yml       # CI/CD: scrapers en paralelo + merge a PostgreSQL
 ├── database/
 │   ├── init_db.py                # Schema + migración automática
-│   ├── database_db_manager.py    # CRUD, búsqueda inteligente, upsert
-│   └── supermercados.db          # Base de datos SQLite
+│   └── database_db_manager.py    # CRUD, búsqueda inteligente, upsert
 │
 ├── mercadona.py                  # Scraper Mercadona (API REST)
 ├── carrefour.py                  # Scraper Carrefour (Playwright)
@@ -70,7 +69,7 @@ supermarket_scraper/
 ├── components.py                 # Componentes UI reutilizables
 ├── charts.py                     # Gráficos Plotly
 ├── styles.py                     # Estilos CSS del dashboard
-├── export.py                     # Exportación a PDF y enlaces de email
+├── export.py                     # Exportación y enlaces de email
 │
 ├── main.py                       # Orquestador: todos los scrapers secuencial
 ├── run_scraper.py                # Ejecución individual + flags --export-csv, --skip-db
@@ -131,15 +130,17 @@ Ver `normalizacion.md` para el detalle completo.
 
 ### 3. Almacenamiento (Base de datos)
 
-`database_db_manager.py` recibe el DataFrame ya normalizado y:
+`database_db_manager.py` recibe el DataFrame ya normalizado y conecta a PostgreSQL mediante la variable de entorno `DATABASE_URL`:
 
 - **Upsert en `productos`:** Si el producto no existe (por `id_externo` + `supermercado`), lo crea. Si ya existe, actualiza sus campos normalizados.
 - **Insert en `precios`:** Un registro por producto por día. Deduplicación automática por fecha si el scraper se ejecuta más de una vez al día.
 - **Fallback de URL:** Si `Url` llega vacía, construye la URL a partir de `id_externo` + el patrón de URL conocido para cada supermercado.
 
+La base de datos está alojada en Aiden y no se versiona en el repositorio. No se hace ningún commit de datos al finalizar el pipeline.
+
 #### Migración automática
 
-`init_db.py` detecta columnas faltantes (`tipo_producto`, `marca`, `nombre_normalizado`, `categoria_normalizada`) y las crea con `ALTER TABLE`. Después normaliza los productos existentes. Permite actualizar el esquema sin intervención manual.
+`init_db.py` detecta columnas faltantes (`tipo_producto`, `marca`, `nombre_normalizado`, `categoria_normalizada`) y las crea. Después normaliza los productos existentes. Permite actualizar el esquema sin intervención manual.
 
 ### 4. Búsqueda inteligente
 
@@ -165,15 +166,15 @@ Las búsquedas del dashboard usan dos niveles con `UNION ALL`:
 - **Histórico:** gráfico temporal de un producto con min/max/media y evolución semanal.
 - **Comparador:** tabla resumen por supermercado (más barato, mediana, más caro, diferencia porcentual) + gráfico de barras horizontales por precio unitario.
 - **Favoritos:** lista de seguimiento con búsqueda integrada.
-- **Cesta:** lista de la compra con exportación a PDF descargable y botones de email (Gmail, Outlook, Yahoo) sin necesidad de servidor SMTP.
+- **Cesta:** lista de la compra con botones de email (Gmail, Outlook, Yahoo) sin necesidad de servidor SMTP.
 
-## Modelo de datos (SQLite)
+## Modelo de datos (PostgreSQL)
 
 ```
 ┌──────────────────────┐     ┌──────────────────┐     ┌──────────────────┐
 │     productos        │     │     precios      │     │  equivalencias   │
 ├──────────────────────┤     ├──────────────────┤     ├──────────────────┤
-│ id (PK)              │◄───┐│ id (PK)          │     │ id (PK)          │
+│ id (PK, SERIAL)      │◄───┐│ id (PK, SERIAL)  │     │ id (PK)          │
 │ id_externo           │    ││ producto_id (FK)─┼────►│ nombre_comun     │
 │ nombre               │    ││ precio           │     │ prod_mercadona_id│
 │ supermercado         │    ││ precio_por_unidad│     │ prod_carrefour_id│
@@ -188,10 +189,6 @@ Las búsquedas del dashboard usan dos niveles con `UNION ALL`:
 │ nombre_normalizado   │       └──────────────────┘
 │ categoria_normalizada│
 └──────────────────────┘
-  ↑ Campos tipo_producto, marca,
-    nombre_normalizado y
-    categoria_normalizada añadidos
-    por el normalizador (v2)
 ```
 
 Índices para búsqueda rápida:
@@ -208,7 +205,7 @@ El workflow `.github/workflows/scraper_semanal.yml` ejecuta los scrapers como **
                       ┌─ mercadona (~30s)  ─→ mercadona.csv  ─┐
                       ├─ carrefour (~15m)  ─→ carrefour.csv  ─┤
                       ├─ dia       (~1m)   ─→ dia.csv        ─┤
-Lunes 7:00 AM (España)┼─ alcampo   (~17m)  ─→ alcampo.csv   ─┼─→ merge → DB → git commit
+Lunes 7:00 AM (España)┼─ alcampo   (~17m)  ─→ alcampo.csv   ─┼─→ merge → PostgreSQL (Aiden)
                       ├─ eroski    (~62m)  ─→ eroski.csv     ─┤
                       ├─ consum    (~2m)   ─→ consum.csv     ─┤
                       └─ condis    (~5m)   ─→ condis.csv     ─┘
@@ -218,7 +215,7 @@ Tiempo total: ~64 min (limitado por Eroski + 2 min de merge)
 
 Cada job: instala dependencias → ejecuta `run_scraper.py <super> --export-csv ... --skip-db` → sube CSV como artifact. Tiene `continue-on-error: true`.
 
-El job de merge descarga todos los artifacts, ejecuta `import_results.py export/*.csv` con normalización completa, y hace `git commit` automático. Se ejecuta siempre (`if: always()`), incluso si algún scraper falló.
+El job de merge descarga todos los artifacts y ejecuta `import_results.py export/*.csv` con normalización completa. Se ejecuta siempre (`if: always()`), incluso si algún scraper falló. No realiza ningún commit al repositorio.
 
 ## Ejecución local
 

@@ -204,7 +204,7 @@ UNION ALL
 
 -- Prioridad 2: nombre completo contiene "leche"
 SELECT * FROM productos WHERE nombre LIKE '%leche%'
-  AND id NOT IN (resultados de prioridad 1)
+  AND id NOT IN (SELECT id FROM productos WHERE nombre_normalizado LIKE 'leche%')
 -- → 590 resultados: Café con leche, Chocolate con leche...
 ```
 
@@ -214,7 +214,7 @@ El dashboard muestra los 477 directos primero. Los 590 secundarios van en un exp
 
 | Métrica | Valor |
 |---|---|
-| Productos totales | ~30.000+ |
+| Productos totales | ~45.000 |
 | Con marca extraída | ~72,6% |
 | Con categoría normalizada | ~44,2% |
 | Marcas en diccionario | 1.480 |
@@ -243,6 +243,6 @@ El dashboard muestra los 477 directos primero. Los 590 secundarios van en un exp
 | Alternativa | Pros | Contras | Decisión |
 |---|---|---|---|
 | EAN-13 | Identificador universal | No disponible en las APIs | Descartado |
-| SQLite FTS5 | Ranking por relevancia | No resuelve "café con leche" | Insuficiente solo |
+| Full-Text Search (PostgreSQL) | Ranking por relevancia nativo | No resuelve "café con leche" | Insuficiente solo |
 | Embeddings/NLP | Semántico, flexible | Excesivo para el tamaño del proyecto | Descartado |
 | Reglas + taxonomía | Rápido, determinista, explicable | Requiere mantenimiento manual | **Elegido** |

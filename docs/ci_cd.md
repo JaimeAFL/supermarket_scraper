@@ -1,6 +1,6 @@
 # CI/CD: Pipeline paralelo con GitHub Actions
 
-Documentación técnica del sistema de automatización que ejecuta los scrapers semanalmente, maneja fallos parciales y mantiene la base de datos actualizada con commits automáticos.
+Documentación técnica del sistema de automatización que ejecuta los scrapers semanalmente, maneja fallos parciales e importa los resultados directamente a PostgreSQL.
 
 ## Arquitectura del pipeline
 
@@ -10,7 +10,7 @@ El workflow divide el trabajo en **8 jobs independientes**: 7 scrapers en parale
                         ┌─ mercadona (~30s)  ─→ mercadona.csv  ─┐
                         ├─ carrefour (~15m)  ─→ carrefour.csv  ─┤
                         ├─ dia       (~1m)   ─→ dia.csv        ─┤
-Lunes 7:00 AM (España) ──┼─ alcampo   (~17m)  ─→ alcampo.csv   ─┼─→ guardar-en-db ─→ git push
+Lunes 7:00 AM (España) ──┼─ alcampo   (~17m)  ─→ alcampo.csv   ─┼─→ guardar-en-db ─→ PostgreSQL (Aiden)
                         ├─ eroski    (~62m)  ─→ eroski.csv     ─┤     (~2 min)
                         ├─ consum    (~2m)   ─→ consum.csv     ─┤
                         └─ condis    (~5m)   ─→ condis.csv     ─┘
@@ -37,13 +37,15 @@ El flag `--skip-db` es clave: cada job solo genera un CSV, sin tocar la base de 
 
 El job `guardar-en-db` se ejecuta cuando los 7 jobs anteriores han terminado (exitosos o fallidos). Su trabajo es:
 
-1. Descargar los artifacts de los 7 jobs.
-2. Ejecutar `import_results.py export/*.csv`:
+1. Inyectar `DATABASE_URL` en el entorno desde GitHub Secrets.
+2. Descargar los artifacts de los 7 jobs.
+3. Ejecutar `import_results.py export/*.csv`:
    - Lee cada CSV con pandas.
    - Deduplica por `(Id, Supermercado)`.
    - Pasa cada producto por el normalizador.
    - Hace upsert en `productos` e inserta en `precios`.
-3. Hacer `git add database/*.db && git commit && git push`.
+
+La base de datos persiste en Aiden independientemente del pipeline. No se realiza ningún commit al repositorio al finalizar.
 
 ## Trigger
 
@@ -95,17 +97,18 @@ jobs:
     timeout-minutes: 15
     continue-on-error: true
 
-  guardar-en-db:      # Merge final
+  guardar-en-db:      # Merge final → importa a PostgreSQL (Aiden)
     needs: [mercadona, dia, carrefour, alcampo, eroski, consum, condis]
     if: always()
-    steps: [checkout, python, deps, download-artifacts (x7), import_results.py, git-commit-push]
+    steps: [checkout, python, deps, configurar DATABASE_URL,
+            download-artifacts (x7), import_results.py]
 ```
 
 ## Manejo de fallos
 
 ### `continue-on-error: true`
 
-Si Eroski falla (timeout, error de red, cambio en la web), **los otros 5 jobs no se ven afectados** y sus CSVs se suben correctamente.
+Si Eroski falla (timeout, error de red, cambio en la web), **los otros 6 jobs no se ven afectados** y sus CSVs se suben correctamente.
 
 ### `if: always()` en el job de merge
 
@@ -119,9 +122,9 @@ Cada paso de descarga de artifact tiene `continue-on-error: true`. Si un scraper
 
 | Escenario | Resultado |
 |---|---|
-| Todo OK | 7 CSVs → merge → ~44.800 productos actualizados |
+| Todo OK | 7 CSVs → merge → ~44.800 productos actualizados en PostgreSQL |
 | Eroski falla | 6 CSVs → merge → ~34.800 productos (Eroski mantiene datos anteriores) |
-| Eroski + Carrefour fallan | 5 CSVs → merge → ~32.400 productos |
+| Eroski + Carrefour fallan | 5 CSVs → merge → ~32.400 productos actualizados |
 | Todos fallan | 0 CSVs → merge no hace nada → DB sin cambios |
 | Merge falla | CSVs se conservan como artifacts 3 días → se puede re-ejecutar |
 
@@ -152,26 +155,11 @@ Los CSVs se suben con retención de 3 días:
 
 Esto permite que el job de merge los descargue, permite inspección manual si algo falla, y permite re-ejecutar solo el merge sin repetir los scrapers.
 
-## Git commit automático
-
-```yaml
-- name: Commit y push
-  run: |
-    git config --local user.email "github-actions[bot]@users.noreply.github.com"
-    git config --local user.name "github-actions[bot]"
-    git add database/*.db
-    git diff --staged --quiet || git commit -m "Precios actualizados - $(date +'%Y-%m-%d %H:%M')"
-    git push
-```
-
-- `git diff --staged --quiet || git commit` evita commits vacíos si nada cambió.
-- Solo se commitea la base de datos (`database/*.db`), no los CSVs ni los logs.
-- El usuario del commit es `github-actions[bot]` para distinguirlo de commits manuales.
-
 ## Secrets de GitHub
 
 | Secret | Usado por | Descripción |
 |---|---|---|
+| `DATABASE_URL` | Merge | Cadena de conexión a PostgreSQL (Aiden). **Obligatorio.** |
 | `CODIGO_POSTAL` | Dia, Alcampo, Carrefour | Contexto geográfico de tienda |
 | `COOKIE_DIA` | Dia | Cookie de sesión (fallback si la obtención automática falla) |
 | `COOKIE_CARREFOUR` | Carrefour | Cookie opcional de fallback |

@@ -10,15 +10,16 @@ on:
 # Cada scraper corre en PARALELO como job independiente.
 # Así Eroski (62 min) no bloquea a Mercadona (21 seg).
 # Si uno falla, los demás siguen y se guardan sus datos.
-# Se ejecuta cada lunes a las 7:00 AM (hora española).
+# Los resultados se importan directamente a PostgreSQL (Aiden).
+# No se hace commit de base de datos al repositorio.
 # ─────────────────────────────────────────────────────────────
 
 jobs:
 
-  # ── MERCADONA (API rápida, ~1 min) ───────────────────────────
+  # ── MERCADONA (API rápida, ~30 seg) ──────────────────────────
   mercadona:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -34,13 +35,12 @@ jobs:
         with:
           name: mercadona
           path: export/mercadona.csv
-          if-no-files-found: warn
           retention-days: 3
 
-  # ── DIA (API + cookie automática con Playwright) ─────────────
+  # ── DIA (API + cookie con Playwright) ────────────────────────
   dia:
     runs-on: ubuntu-latest
-    timeout-minutes: 20       # 10 era demasiado justo con la instalación de Playwright
+    timeout-minutes: 10
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -49,13 +49,13 @@ jobs:
           python-version: '3.11'
       - name: Instalar dependencias
         run: pip install -r requirements.txt
-      - name: Instalar Playwright (para cookies automáticas)
+      - name: Instalar Playwright (para cookies)
         run: |
           playwright install chromium
           playwright install-deps chromium
       - name: Configurar .env
         run: |
-          echo "CODIGO_POSTAL=${{ secrets.CODIGO_POSTAL || '28001' }}" >> .env
+          echo "CODIGO_POSTAL=${{ secrets.CODIGO_POSTAL }}" >> .env
           echo "COOKIE_DIA=${{ secrets.COOKIE_DIA }}" >> .env
       - name: Ejecutar Dia
         run: python run_scraper.py dia --export-csv export/dia.csv --skip-db
@@ -64,13 +64,12 @@ jobs:
         with:
           name: dia
           path: export/dia.csv
-          if-no-files-found: warn
           retention-days: 3
 
   # ── CARREFOUR (Playwright, ~15 min) ──────────────────────────
   carrefour:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 25
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -84,20 +83,17 @@ jobs:
           playwright install chromium
           playwright install-deps chromium
       - name: Configurar .env
-        # Si no hay secret configurado, se escribe vacío — el scraper
-        # obtendrá la cookie automáticamente con Playwright igualmente.
         run: |
-          echo "CODIGO_POSTAL=${{ secrets.CODIGO_POSTAL || '28001' }}" >> .env
+          echo "CODIGO_POSTAL=${{ secrets.CODIGO_POSTAL }}" >> .env
           echo "COOKIE_CARREFOUR=${{ secrets.COOKIE_CARREFOUR }}" >> .env
       - name: Ejecutar Carrefour
         run: python run_scraper.py carrefour --export-csv export/carrefour.csv --skip-db
-        timeout-minutes: 25
+        timeout-minutes: 20
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: carrefour
           path: export/carrefour.csv
-          if-no-files-found: warn
           retention-days: 3
 
   # ── ALCAMPO (Playwright, ~17 min) ────────────────────────────
@@ -118,7 +114,7 @@ jobs:
           playwright install-deps chromium
       - name: Configurar .env
         run: |
-          echo "CODIGO_POSTAL=${{ secrets.CODIGO_POSTAL || '28001' }}" >> .env
+          echo "CODIGO_POSTAL=${{ secrets.CODIGO_POSTAL }}" >> .env
       - name: Ejecutar Alcampo
         run: python run_scraper.py alcampo --export-csv export/alcampo.csv --skip-db
         timeout-minutes: 25
@@ -127,12 +123,13 @@ jobs:
         with:
           name: alcampo
           path: export/alcampo.csv
-          if-no-files-found: warn
           retention-days: 3
 
   # ── EROSKI (Playwright, ~62 min — el más lento) ──────────────
   eroski:
     runs-on: ubuntu-latest
+    # Eroski es el scraper más lento y su duración real puede variar
+    # bastante por latencia/bloqueos transitorios del sitio.
     timeout-minutes: 120
     continue-on-error: true
     steps:
@@ -148,7 +145,7 @@ jobs:
           playwright install-deps chromium
       - name: Configurar .env
         run: |
-          echo "CODIGO_POSTAL=${{ secrets.CODIGO_POSTAL || '28001' }}" >> .env
+          echo "CODIGO_POSTAL=${{ secrets.CODIGO_POSTAL }}" >> .env
       - name: Ejecutar Eroski
         run: python run_scraper.py eroski --export-csv export/eroski.csv --skip-db
         timeout-minutes: 110
@@ -157,62 +154,14 @@ jobs:
         with:
           name: eroski
           path: export/eroski.csv
-          if-no-files-found: warn
           retention-days: 3
 
-  # ── CONSUM (API REST pura, ~5 min) ───────────────────────────
-  consum:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Instalar dependencias
-        run: pip install -r requirements.txt
-      - name: Ejecutar Consum
-        run: python run_scraper.py consum --export-csv export/consum.csv --skip-db
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: consum
-          path: export/consum.csv
-          if-no-files-found: warn
-          retention-days: 3
-
-  # ── CONDIS (API REST pura, ~6 min) ───────────────────────────
-  condis:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Instalar dependencias
-        run: pip install -r requirements.txt
-      - name: Ejecutar Condis
-        run: python run_scraper.py condis --export-csv export/condis.csv --skip-db
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: condis
-          path: export/condis.csv
-          if-no-files-found: warn
-          retention-days: 3
-
-  # ── MERGE: fusionar todo en la DB y hacer commit ─────────────
+  # ── MERGE: importar todos los CSVs a PostgreSQL (Aiden) ──────
   guardar-en-db:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [mercadona, dia, carrefour, alcampo, eroski, consum, condis]
+    needs: [mercadona, dia, carrefour, alcampo, eroski]
     if: always()
-    # FIX: permiso de escritura necesario para git push
-    permissions:
-      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -221,6 +170,10 @@ jobs:
           python-version: '3.11'
       - name: Instalar dependencias
         run: pip install -r requirements.txt
+
+      - name: Configurar conexión a base de datos
+        run: |
+          echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" >> .env
 
       - name: Descargar resultados de Mercadona
         uses: actions/download-artifact@v4
@@ -257,35 +210,7 @@ jobs:
           path: export/
         continue-on-error: true
 
-      - name: Descargar resultados de Consum
-        uses: actions/download-artifact@v4
-        with:
-          name: consum
-          path: export/
-        continue-on-error: true
-
-      - name: Descargar resultados de Condis
-        uses: actions/download-artifact@v4
-        with:
-          name: condis
-          path: export/
-        continue-on-error: true
-
-      - name: Importar resultados a la base de datos
+      - name: Importar resultados a PostgreSQL
         run: |
-          echo "Archivos disponibles en export/:"
-          ls -la export/ || echo "  (carpeta vacía o no existe)"
-          if ls export/*.csv 1> /dev/null 2>&1; then
-            python import_results.py export/*.csv
-          else
-            echo "No hay archivos CSV para importar. Abortando."
-            exit 1
-          fi
-
-      - name: Commit y push
-        run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add database/supermercados.db
-          git diff --staged --quiet || git commit -m "Precios actualizados (semanal) - $(date +'%Y-%m-%d %H:%M')"
-          git push
+          ls -la export/ || echo "No hay archivos CSV"
+          python import_results.py export/*.csv || echo "No se pudieron importar resultados"

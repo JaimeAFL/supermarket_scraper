@@ -4,6 +4,33 @@ Registro de todos los cambios realizados en Supermarket Price Tracker.
 
 ---
 
+## v3.0.0 — Migración a PostgreSQL y Aiden (2026-03-13)
+
+Migración completa de la capa de base de datos de SQLite a PostgreSQL alojado en Aiden.
+
+### Añadido
+
+- **`DATABASE_URL`** como variable de entorno obligatoria. Sustituye a `SUPERMARKET_DB_PATH`. Acepta cualquier cadena de conexión PostgreSQL estándar.
+- **Secret `DATABASE_URL`** en GitHub Actions: el job de merge lo inyecta en el entorno antes de ejecutar `import_results.py`.
+
+### Cambiado
+
+- **`database/database_db_manager.py`**: reemplazado `sqlite3` por `psycopg2`. Placeholders `?` migrados a `%s`. Eliminados `PRAGMA`, `check_same_thread` y `sqlite3.Row`. Conexión gestionada por pool.
+- **`database/init_db.py`**: sintaxis `CREATE TABLE` migrada a PostgreSQL (`SERIAL` en lugar de `AUTOINCREMENT`, tipos de columna ajustados). Eliminada creación de directorio y archivo `.db`.
+- **`scraper_semanal.yml`**: el job de merge (`guardar-en-db`) ya no ejecuta `git add database/*.db && git commit && git push`. La base de datos persiste en Aiden independientemente del pipeline; no se versiona en el repositorio.
+- **`example.env`**: eliminada `SUPERMARKET_DB_PATH`; añadida `DATABASE_URL`.
+- **`tests/test_db.py`**: fixture `db_temporal` reescrita para conectar a la BD de test vía `DATABASE_URL`. Si la variable no está definida, los tests de base de datos se saltan con `pytest.skip()`. Limpieza de datos entre tests con `DELETE` en lugar de borrar el archivo `.db`.
+- **`.gitignore`**: eliminada la entrada `*.db`; añadida `export/` para excluir los CSVs temporales de los scrapers.
+- **`requirements.txt`**: añadido `psycopg2-binary`; eliminado cualquier driver exclusivo de SQLite.
+- **README** y documentación técnica actualizados para reflejar el nuevo stack.
+
+### Eliminado
+
+- `database/supermercados.db` — eliminado del repositorio. Los datos persisten en Aiden.
+- Variable de entorno `SUPERMARKET_DB_PATH`.
+
+---
+
 ## v2.1.0 — Estabilidad de scrapers, UX y exportación (2026-03-12)
 
 ### Añadido
@@ -18,11 +45,10 @@ Registro de todos los cambios realizados en Supermarket Price Tracker.
 
 ### Corregido
 
-- **URLs silenciosamente descartadas**: `guardar_productos()` en `database_db_manager.py` (líneas 81–82) normalizaba inconsistentemente los nombres de columna `Url` vs `URL`. Ahora se estandariza `Url` en todos los scrapers y en el guardado.
+- **URLs silenciosamente descartadas**: `guardar_productos()` en `database_db_manager.py` normalizaba inconsistentemente los nombres de columna `Url` vs `URL`. Ahora se estandariza `Url` en todos los scrapers y en el guardado.
 - **Fallback de URL**: cuando `url` está vacía, se construye automáticamente a partir de `id_externo` + patrones de URL conocidos por supermercado.
-- **`sqlite3.Row` no subscriptable**: corregido acceso a filas con `.get()` explícito en lugar de indexación por posición.
 - **Flag `--single-process` eliminado**: este flag de Chromium rompía silenciosamente `page.on("response")` en Playwright, devolviendo 0 productos. Todos los scrapers Playwright usan ahora solo `--disable-dev-shm-usage`, `--no-sandbox`, `--disable-gpu`.
-- **Orden de scrapers optimizado**: `main.py` ejecuta primero los scrapers por API (Mercadona, Dia) y después los de Playwright (Carrefour, Alcampo, Eroski) para minimizar el impacto de fallos de memoria.
+- **Orden de scrapers optimizado**: `main.py` ejecuta primero los scrapers por API (Mercadona, Dia, Consum, Condis) y después los de Playwright (Carrefour, Alcampo, Eroski) para minimizar el impacto de fallos de memoria.
 - **Typo en `main.py` línea 49**: `.` → `,`.
 - **Caracteres españoles corregidos** en textos del dashboard (tildes, ñ).
 
@@ -30,7 +56,7 @@ Registro de todos los cambios realizados en Supermarket Price Tracker.
 
 - **SMTP eliminado**: reemplazado completamente por enlaces de composición web. No requiere configuración de servidor de correo.
 - **Múltiples mejoras de UX** en páginas Histórico, Comparador, Favoritos y Cesta.
-- **README reescrito** para audiencia técnica y no técnica, con sección de API REST.
+- **README reescrito** para audiencia técnica y no técnica.
 
 ---
 
@@ -64,7 +90,7 @@ categoría a partir del nombre, resolviendo el problema de que buscar
 - **`import_results.py`** — Script para importar CSVs de scrapers paralelos a la base de datos con normalización automática.
 - 4 columnas nuevas en tabla `productos`: `tipo_producto`, `marca`, `nombre_normalizado`, `categoria_normalizada`.
 - 4 índices nuevos para búsqueda rápida por tipo, nombre normalizado, categoría y marca.
-- Migración automática en `init_db.py`: detecta columnas faltantes, las crea con `ALTER TABLE` y normaliza los productos existentes.
+- Migración automática en `init_db.py`: detecta columnas faltantes, las crea y normaliza los productos existentes.
 - Filtro por categoría normalizada en la búsqueda del dashboard.
 - Separación de resultados por prioridad: resultados directos (tipo = búsqueda) vs. menciones secundarias.
 
@@ -83,6 +109,8 @@ categoría a partir del nombre, resolviendo el problema de que buscar
 ---
 
 ## v1.1.0 — CI/CD paralelo y fixes del dashboard (2026-02-27)
+
+Resolución de 6 bugs del dashboard y rediseño del workflow de GitHub Actions para ejecución paralela.
 
 ### Corregido
 

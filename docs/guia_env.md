@@ -12,10 +12,10 @@ Edita `.env` con tus valores antes de ejecutar cualquier scraper.
 
 | Variable | Obligatoria | Usado por | Descripción |
 |---|---|---|---|
+| `DATABASE_URL` | **Sí** | Todos | Cadena de conexión a PostgreSQL. Formato: `postgresql://usuario:contraseña@host:5432/nombre_bd`. |
 | `CODIGO_POSTAL` | Recomendada | Dia, Alcampo, Carrefour | Contexto geográfico para precios y disponibilidad de tienda. |
-| `COOKIE_DIA` | Opcional* | Dia | Cookie de sesión. Normalmente se obtiene automática con Playwright. |
+| `COOKIE_DIA` | Opcional* | Dia | Cookie de sesión. Normalmente se obtiene automáticamente con Playwright. |
 | `COOKIE_CARREFOUR` | Opcional | Carrefour | Fallback manual para flujos legacy de verificación de cookies. |
-| `SUPERMARKET_DB_PATH` | Opcional | Todos | Ruta absoluta personalizada para el archivo SQLite. |
 | `TIMEOUT_MERCADONA_MIN` | Opcional | main.py | Timeout en minutos para el scraper de Mercadona (por defecto: 15). |
 | `TIMEOUT_CARREFOUR_MIN` | Opcional | main.py | Timeout en minutos para Carrefour (por defecto: 40). |
 | `TIMEOUT_DIA_MIN` | Opcional | main.py | Timeout en minutos para Dia (por defecto: 20). |
@@ -23,7 +23,7 @@ Edita `.env` con tus valores antes de ejecutar cualquier scraper.
 | `TIMEOUT_EROSKI_MIN` | Opcional | main.py | Timeout en minutos para Eroski (por defecto: 110). |
 | `TIMEOUT_CONSUM_MIN` | Opcional | main.py | Timeout en minutos para Consum (por defecto: 5). |
 
-\* `dia.py` necesita `COOKIE_DIA` en runtime, pero `main.py` y `run_scraper.py dia` intentan obtenerla automáticamente via `cookie_manager.py` antes de ejecutar el scraper.
+\* `dia.py` necesita `COOKIE_DIA` en runtime, pero `main.py` y `run_scraper.py dia` intentan obtenerla automáticamente vía `cookie_manager.py` antes de ejecutar el scraper.
 
 ## Configuración por entorno
 
@@ -32,6 +32,7 @@ Edita `.env` con tus valores antes de ejecutar cualquier scraper.
 Mínimo recomendado:
 
 ```env
+DATABASE_URL=postgresql://usuario:contraseña@host:5432/supermercados
 CODIGO_POSTAL=28001
 COOKIE_DIA=
 COOKIE_CARREFOUR=
@@ -49,6 +50,7 @@ Secrets recomendados:
 
 | Secret | Necesidad |
 |---|---|
+| `DATABASE_URL` | **Obligatoria** |
 | `CODIGO_POSTAL` | Recomendada |
 | `COOKIE_DIA` | Opcional (fallback) |
 | `COOKIE_CARREFOUR` | Opcional (fallback) |
@@ -62,14 +64,24 @@ python -c "
 from dotenv import load_dotenv
 import os
 load_dotenv()
+print('DATABASE_URL:', 'OK' if os.getenv('DATABASE_URL') else 'NO DEFINIDA — requerida')
 print('CODIGO_POSTAL:', os.getenv('CODIGO_POSTAL', 'NO DEFINIDO'))
 print('COOKIE_DIA:', 'OK' if os.getenv('COOKIE_DIA') else 'AUTO/VACÍO')
 print('COOKIE_CARREFOUR:', 'OK' if os.getenv('COOKIE_CARREFOUR') else 'NO DEFINIDA')
-print('DB_PATH:', os.getenv('SUPERMARKET_DB_PATH', 'database/supermercados.db (por defecto)'))
 "
 ```
 
 ## Resolución de problemas
+
+### `DATABASE_URL no definida` / error de conexión
+
+Asegúrate de que `DATABASE_URL` está presente en tu `.env` o como secret de GitHub. La URL debe incluir credenciales válidas y apuntar a la instancia correcta de PostgreSQL. Ejemplo:
+
+```env
+DATABASE_URL=postgresql://usuario:contraseña@host:5432/supermercados
+```
+
+Si el host es Aiden, consulta el panel de administración del servicio para obtener la URL de conexión exacta.
 
 ### `Dia: No se encontró COOKIE_DIA`
 
@@ -83,10 +95,6 @@ print('DB_PATH:', os.getenv('SUPERMARKET_DB_PATH', 'database/supermercados.db (p
    ```env
    COOKIE_DIA=tu_cookie_aqui
    ```
-
-### Error de base de datos / ruta no encontrada
-
-Si defines `SUPERMARKET_DB_PATH`, usa siempre ruta absoluta y asegúrate de que la carpeta existe y tiene permisos de escritura. El proyecto también acepta la ruta relativa por defecto `database/supermercados.db` si no se define la variable.
 
 ### Timeout de un scraper
 
