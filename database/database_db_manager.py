@@ -1,6 +1,5 @@
 """database/database_db_manager.py - Gestor de la BD con normalización integrada."""
 
-import sqlite3
 import logging
 import os
 import pandas as pd
@@ -8,9 +7,12 @@ from datetime import datetime, date
 
 logger = logging.getLogger(__name__)
 
-# Ruta absoluta basada en ubicación REAL de este archivo
-_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-_DEFAULT_DB = os.path.join(_PROJECT_ROOT, "database", "supermercados.db")
+# Importar psycopg2
+try:
+    import psycopg2
+    import psycopg2.extras
+except ImportError:
+    raise ImportError("Instala psycopg2-binary: pip install psycopg2-binary")
 
 # Importar normalizador (graceful fallback)
 try:
@@ -21,29 +23,34 @@ except ImportError:
     logger.warning("matching.normalizer no disponible — normalización desactivada.")
 
 
+def _get_database_url():
+    url = os.environ.get("DATABASE_URL", "")
+    if not url:
+        raise ValueError("Variable de entorno DATABASE_URL no definida.")
+    # psycopg2 necesita postgresql:// en lugar de postgres://
+    return url.replace("postgres://", "postgresql://", 1)
+
+
 class DatabaseManager:
 
     def __init__(self, db_path: str = None):
-        if db_path is None:
-            db_path = os.environ.get("SUPERMARKET_DB_PATH", _DEFAULT_DB)
-        self.db_path = os.path.abspath(db_path)
+        # db_path se ignora — mantenemos el parámetro por compatibilidad
         self._conn = None
         self._conectar()
-        logger.info("DB conectada: %s", self.db_path)
+        logger.info("DB PostgreSQL conectada.")
 
     # ── Conexión ──────────────────────────────────────────────────────
     def _conectar(self):
-        self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA foreign_keys=ON")
+        url = _get_database_url()
+        self._conn = psycopg2.connect(url, sslmode="require")
+        self._conn.autocommit = False
 
     def _cursor(self):
         try:
-            self._conn.execute("SELECT 1")
+            self._conn.cursor().execute("SELECT 1")
         except Exception:
             self._conectar()
-        return self._conn.cursor()
+        return self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
     def cerrar(self):
         if self._conn:
@@ -59,7 +66,7 @@ class DatabaseManager:
         cur = self._cursor()
         nuevos = actualizados = precios_ok = precios_skip = 0
         ts = datetime.now().isoformat()
-        fecha_hoy = date.today().isoformat()  # "2026-02-28"
+        fecha_hoy = date.today().isoformat()
 
         for _, row in df.iterrows():
             try:
@@ -75,7 +82,7 @@ class DatabaseManager:
                 if precio <= 0:
                     continue
 
-                precio_por_unidad = str(row.get("Precio_unidad") or "").strip()
+                precio_por_unidad = str(row.get("Precio_unidad") or "").strip() or None
                 categoria  = str(row.get("Categoria") or "").strip()
                 formato    = str(row.get("Formato") or "").strip()
                 url        = str(row.get("URL") or row.get("Url") or "").strip()
@@ -102,19 +109,19 @@ class DatabaseManager:
                          url, url_imagen, fecha_creacion, fecha_actualizacion,
                          tipo_producto, marca, nombre_normalizado,
                          categoria_normalizada, formato_normalizado)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                    ON CONFLICT(id_externo, supermercado) DO UPDATE SET
-                        nombre                = excluded.nombre,
-                        categoria             = excluded.categoria,
-                        formato               = excluded.formato,
-                        url                   = excluded.url,
-                        url_imagen            = excluded.url_imagen,
-                        fecha_actualizacion   = excluded.fecha_actualizacion,
-                        tipo_producto         = excluded.tipo_producto,
-                        marca                 = excluded.marca,
-                        nombre_normalizado    = excluded.nombre_normalizado,
-                        categoria_normalizada = excluded.categoria_normalizada,
-                        formato_normalizado   = excluded.formato_normalizado
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (id_externo, supermercado) DO UPDATE SET
+                        nombre                = EXCLUDED.nombre,
+                        categoria             = EXCLUDED.categoria,
+                        formato               = EXCLUDED.formato,
+                        url                   = EXCLUDED.url,
+                        url_imagen            = EXCLUDED.url_imagen,
+                        fecha_actualizacion   = EXCLUDED.fecha_actualizacion,
+                        tipo_producto         = EXCLUDED.tipo_producto,
+                        marca                 = EXCLUDED.marca,
+                        nombre_normalizado    = EXCLUDED.nombre_normalizado,
+                        categoria_normalizada = EXCLUDED.categoria_normalizada,
+                        formato_normalizado   = EXCLUDED.formato_normalizado
                 """, (id_externo, nombre, supermercado, categoria, formato,
                       url, url_imagen, ts, ts,
                       tipo_producto, marca, nombre_normalizado,
@@ -123,23 +130,22 @@ class DatabaseManager:
 
                 cur.execute(
                     "SELECT id FROM productos "
-                    "WHERE id_externo=? AND supermercado=?",
+                    "WHERE id_externo=%s AND supermercado=%s",
                     (id_externo, supermercado),
                 )
-                prod_id = cur.fetchone()[0]
+                prod_id = cur.fetchone()["id"]
 
                 # ── Insertar precio: 1 registro por producto por DÍA ──
-                # Usar DATE() para comparación robusta (no LIKE)
                 cur.execute(
                     "SELECT id FROM precios "
-                    "WHERE producto_id=? AND DATE(fecha_captura)=?",
+                    "WHERE producto_id=%s AND DATE(fecha_captura)=%s",
                     (prod_id, fecha_hoy),
                 )
                 if not cur.fetchone():
                     cur.execute(
                         "INSERT INTO precios "
                         "(producto_id, precio, precio_por_unidad, fecha_captura)"
-                        " VALUES (?,?,?,?)",
+                        " VALUES (%s,%s,%s,%s)",
                         (prod_id, precio, precio_por_unidad, ts),
                     )
                     precios_ok += 1
@@ -151,9 +157,8 @@ class DatabaseManager:
         self._conn.commit()
 
         logger.info(
-            "guardar_productos [%s]: fecha_hoy=%s, "
+            "guardar_productos: fecha_hoy=%s, "
             "precios_insertados=%d, precios_ya_existían=%d",
-            supermercado if 'supermercado' in dir() else "?",
             fecha_hoy, precios_ok, precios_skip,
         )
 
@@ -165,33 +170,33 @@ class DatabaseManager:
     def obtener_estadisticas(self) -> dict:
         cur = self._cursor()
         try:
-            cur.execute("SELECT COUNT(*) FROM productos")
-            total_prod = cur.fetchone()[0]
-            cur.execute("SELECT COUNT(*) FROM precios")
-            total_precios = cur.fetchone()[0]
-            cur.execute("SELECT COUNT(DISTINCT supermercado) FROM productos")
-            total_supers = cur.fetchone()[0]
-            cur.execute("SELECT COUNT(*) FROM equivalencias")
-            total_equiv = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) AS c FROM productos")
+            total_prod = cur.fetchone()["c"]
+            cur.execute("SELECT COUNT(*) AS c FROM precios")
+            total_precios = cur.fetchone()["c"]
+            cur.execute("SELECT COUNT(DISTINCT supermercado) AS c FROM productos")
+            total_supers = cur.fetchone()["c"]
+            cur.execute("SELECT COUNT(*) AS c FROM equivalencias")
+            total_equiv = cur.fetchone()["c"]
             cur.execute(
-                "SELECT supermercado, COUNT(*) FROM productos "
-                "GROUP BY supermercado ORDER BY COUNT(*) DESC"
+                "SELECT supermercado, COUNT(*) AS c FROM productos "
+                "GROUP BY supermercado ORDER BY c DESC"
             )
-            por_super = dict(cur.fetchall())
+            por_super = {r["supermercado"]: r["c"] for r in cur.fetchall()}
             cur.execute(
-                "SELECT MIN(fecha_captura), MAX(fecha_captura) FROM precios"
+                "SELECT MIN(fecha_captura) AS mn, MAX(fecha_captura) AS mx FROM precios"
             )
             fechas = cur.fetchone()
             cur.execute(
-                "SELECT COUNT(DISTINCT DATE(fecha_captura)) FROM precios"
+                "SELECT COUNT(DISTINCT DATE(fecha_captura)) AS c FROM precios"
             )
-            dias_datos = cur.fetchone()[0]
+            dias_datos = cur.fetchone()["c"]
             cur.execute("""
-                SELECT categoria_normalizada, COUNT(*) FROM productos
+                SELECT categoria_normalizada, COUNT(*) AS c FROM productos
                 WHERE categoria_normalizada != ''
-                GROUP BY categoria_normalizada ORDER BY COUNT(*) DESC
+                GROUP BY categoria_normalizada ORDER BY c DESC
             """)
-            por_cat = dict(cur.fetchall())
+            por_cat = {r["categoria_normalizada"]: r["c"] for r in cur.fetchall()}
             return {
                 "total_productos": total_prod,
                 "total_registros_precios": total_precios,
@@ -199,8 +204,8 @@ class DatabaseManager:
                 "total_equivalencias": total_equiv,
                 "productos_por_supermercado": por_super,
                 "productos_por_categoria": por_cat,
-                "primera_captura": fechas[0] if fechas else None,
-                "ultima_captura": fechas[1] if fechas else None,
+                "primera_captura": fechas["mn"] if fechas else None,
+                "ultima_captura": fechas["mx"] if fechas else None,
                 "dias_con_datos": dias_datos,
             }
         except Exception as e:
@@ -233,12 +238,11 @@ class DatabaseManager:
             """
             params = ()
             if supermercado:
-                sql += " WHERE p.supermercado=?"
+                sql += " WHERE p.supermercado=%s"
                 params = (supermercado,)
             cur.execute(sql, params)
             rows = cur.fetchall()
-            return (pd.DataFrame(rows, columns=[d[0] for d in cur.description])
-                    if rows else pd.DataFrame())
+            return pd.DataFrame(rows) if rows else pd.DataFrame()
         except Exception as e:
             logger.error("obtener_productos_con_precio_actual: %s", e)
             return pd.DataFrame()
@@ -249,27 +253,18 @@ class DatabaseManager:
         try:
             limite_por_super = max(5, int(limite) // 5)
             palabras = nombre.strip().split() if nombre else []
-
             if not palabras:
                 return pd.DataFrame()
 
-            where_tipo = []
-            where_nombre = []
-            params_tipo = []
-            params_nombre = []
-            for p in palabras:
-                where_tipo.append("p.nombre_normalizado LIKE ?")
-                params_tipo.append(f"{p.lower()}%")
-                where_nombre.append("p.nombre LIKE ?")
-                params_nombre.append(f"%{p}%")
-
-            tipo_sql = " AND ".join(where_tipo)
-            nombre_sql = " AND ".join(where_nombre)
+            where_tipo   = " AND ".join(["p.nombre_normalizado LIKE %s" for _ in palabras])
+            where_nombre = " AND ".join(["p.nombre ILIKE %s" for _ in palabras])
+            params_tipo   = [f"{p.lower()}%" for p in palabras]
+            params_nombre = [f"%{p}%" for p in palabras]
 
             super_filter = ""
             super_params = []
             if supermercado:
-                super_filter = " AND p.supermercado=?"
+                super_filter = " AND p.supermercado=%s"
                 super_params = [supermercado]
 
             sql = f"""
@@ -291,7 +286,7 @@ class DatabaseManager:
                                ORDER BY p.nombre_normalizado
                            ) AS rn
                     FROM productos p
-                    WHERE ({tipo_sql}) {super_filter}
+                    WHERE ({where_tipo}) {super_filter}
 
                     UNION ALL
 
@@ -308,13 +303,13 @@ class DatabaseManager:
                                ORDER BY p.nombre
                            ) AS rn
                     FROM productos p
-                    WHERE ({nombre_sql}) {super_filter}
+                    WHERE ({where_nombre}) {super_filter}
                       AND p.id NOT IN (
                           SELECT p2.id FROM productos p2
-                          WHERE ({tipo_sql.replace('p.', 'p2.')})
+                          WHERE ({where_tipo.replace('p.', 'p2.')})
                       )
                 ) sub
-                WHERE sub.rn <= ?
+                WHERE sub.rn <= %s
                 ORDER BY sub.prioridad, sub.supermercado, sub.nombre
             """
             params = (params_tipo + super_params +
@@ -324,8 +319,7 @@ class DatabaseManager:
 
             cur.execute(sql, params)
             rows = cur.fetchall()
-            return (pd.DataFrame(rows, columns=[d[0] for d in cur.description])
-                    if rows else pd.DataFrame())
+            return pd.DataFrame(rows) if rows else pd.DataFrame()
         except Exception as e:
             logger.error("buscar_productos: %s", e)
             return pd.DataFrame()
@@ -338,14 +332,9 @@ class DatabaseManager:
             if not palabras:
                 return pd.DataFrame()
 
-            where_tipo = " AND ".join(
-                ["p.nombre_normalizado LIKE ?" for _ in palabras]
-            )
-            params_tipo = [f"{p.lower()}%" for p in palabras]
-
-            where_nombre = " AND ".join(
-                ["p.nombre LIKE ?" for _ in palabras]
-            )
+            where_tipo   = " AND ".join(["p.nombre_normalizado LIKE %s" for _ in palabras])
+            where_nombre = " AND ".join(["p.nombre ILIKE %s" for _ in palabras])
+            params_tipo   = [f"{p.lower()}%" for p in palabras]
             params_nombre = [f"%{p}%" for p in palabras]
 
             sql = f"""
@@ -393,14 +382,13 @@ class DatabaseManager:
                           SELECT p2.id FROM productos p2
                           WHERE {where_tipo.replace('p.', 'p2.')}
                       )
-                ) sub WHERE sub.rn <= ?
+                ) sub WHERE sub.rn <= %s
                 ORDER BY sub.prioridad, sub.supermercado, sub.precio
             """
             params = params_tipo + params_nombre + params_tipo + [limite_por_super]
             cur.execute(sql, params)
             rows = cur.fetchall()
-            return (pd.DataFrame(rows, columns=[d[0] for d in cur.description])
-                    if rows else pd.DataFrame())
+            return pd.DataFrame(rows) if rows else pd.DataFrame()
         except Exception as e:
             logger.error("buscar_para_comparar: %s", e)
             return pd.DataFrame()
@@ -410,13 +398,13 @@ class DatabaseManager:
         cur = self._cursor()
         try:
             cur.execute("""
-                SELECT categoria_normalizada, COUNT(*) as cnt
+                SELECT categoria_normalizada, COUNT(*) AS cnt
                 FROM productos
                 WHERE categoria_normalizada != '' AND categoria_normalizada IS NOT NULL
                 GROUP BY categoria_normalizada
                 ORDER BY cnt DESC
             """)
-            return [(r[0], r[1]) for r in cur.fetchall()]
+            return [(r["categoria_normalizada"], r["cnt"]) for r in cur.fetchall()]
         except Exception:
             return []
 
@@ -427,13 +415,11 @@ class DatabaseManager:
             cur.execute("""
                 SELECT fecha_captura, precio,
                        precio_por_unidad AS precio_unidad
-                FROM precios WHERE producto_id=?
+                FROM precios WHERE producto_id=%s
                 ORDER BY fecha_captura ASC
             """, (producto_id,))
             rows = cur.fetchall()
-            return (pd.DataFrame(rows,
-                    columns=["fecha_captura", "precio", "precio_unidad"])
-                    if rows else pd.DataFrame())
+            return pd.DataFrame(rows) if rows else pd.DataFrame()
         except Exception as e:
             logger.error("obtener_historico_precios: %s", e)
             return pd.DataFrame()
@@ -445,7 +431,7 @@ class DatabaseManager:
             cur.execute(
                 "SELECT DISTINCT nombre_comun FROM equivalencias ORDER BY nombre_comun"
             )
-            return [r[0] for r in cur.fetchall()]
+            return [r["nombre_comun"] for r in cur.fetchall()]
         except Exception:
             return []
 
@@ -453,7 +439,7 @@ class DatabaseManager:
         cur = self._cursor()
         try:
             cur.execute(
-                "SELECT * FROM equivalencias WHERE nombre_comun=?",
+                "SELECT * FROM equivalencias WHERE nombre_comun=%s",
                 (nombre_comun,),
             )
             row = cur.fetchone()
@@ -478,7 +464,7 @@ class DatabaseManager:
                         SELECT id FROM precios WHERE producto_id=p.id
                         ORDER BY fecha_captura DESC LIMIT 1
                     )
-                    WHERE p.id_externo=? AND p.supermercado=?
+                    WHERE p.id_externo=%s AND p.supermercado=%s
                 """, (id_ext, sn))
                 r = cur.fetchone()
                 if r:
@@ -507,7 +493,7 @@ class DatabaseManager:
             INSERT INTO equivalencias
                 (nombre_comun, producto_mercadona_id, producto_carrefour_id,
                  producto_dia_id, producto_alcampo_id, producto_eroski_id)
-            VALUES (?,?,?,?,?,?)
+            VALUES (%s,%s,%s,%s,%s,%s)
             ON CONFLICT DO NOTHING
         """, (nombre_comun,
               ids_por_super.get("Mercadona"),
@@ -522,7 +508,7 @@ class DatabaseManager:
         ids_por_super = {}
         for pid in lista_producto_ids:
             cur.execute(
-                "SELECT id_externo, supermercado FROM productos WHERE id=?",
+                "SELECT id_externo, supermercado FROM productos WHERE id=%s",
                 (pid,),
             )
             row = cur.fetchone()
@@ -536,7 +522,7 @@ class DatabaseManager:
         cur = self._cursor()
         try:
             cur.execute(
-                "INSERT OR IGNORE INTO favoritos (producto_id) VALUES (?)",
+                "INSERT INTO favoritos (producto_id) VALUES (%s) ON CONFLICT DO NOTHING",
                 (producto_id,),
             )
             self._conn.commit()
@@ -546,7 +532,7 @@ class DatabaseManager:
     def eliminar_favorito(self, producto_id):
         cur = self._cursor()
         try:
-            cur.execute("DELETE FROM favoritos WHERE producto_id=?", (producto_id,))
+            cur.execute("DELETE FROM favoritos WHERE producto_id=%s", (producto_id,))
             self._conn.commit()
         except Exception as e:
             logger.error("eliminar_favorito: %s", e)
@@ -568,20 +554,13 @@ class DatabaseManager:
                 ORDER BY f.fecha_agregado DESC
             """)
             rows = cur.fetchall()
-            return (pd.DataFrame(rows, columns=[d[0] for d in cur.description])
-                    if rows else pd.DataFrame())
+            return pd.DataFrame(rows) if rows else pd.DataFrame()
         except Exception as e:
             logger.error("obtener_favoritos: %s", e)
             return pd.DataFrame()
-    
+
     # ── Cesta de la compra ─────────────────────────────────────────────
-
     def obtener_producto_por_id(self, producto_id):
-        """Devuelve dict con datos del producto + ultimo precio.
-
-        Returns:
-            dict o None si no se encuentra.
-        """
         cur = self._cursor()
         try:
             cur.execute("""
@@ -591,7 +570,7 @@ class DatabaseManager:
                        (SELECT precio FROM precios WHERE producto_id=p.id
                         ORDER BY fecha_captura DESC LIMIT 1) AS precio
                 FROM productos p
-                WHERE p.id = ?
+                WHERE p.id = %s
             """, (producto_id,))
             row = cur.fetchone()
             return dict(row) if row else None
@@ -600,53 +579,36 @@ class DatabaseManager:
             return None
 
     def buscar_alternativa_mas_barata(self, producto_id):
-        """Busca el producto equivalente mas barato en otro supermercado.
-
-        Busca por misma categoria + formato + nombre similar (tipo_producto).
-        Solo devuelve alternativa si es estrictamente mas barata.
-
-        Returns:
-            dict con {id, nombre, supermercado, precio, formato_normalizado}
-            o None si no hay alternativa mas barata.
-        """
         cur = self._cursor()
         try:
-            # 1) Obtener datos del producto original
             producto = self.obtener_producto_por_id(producto_id)
             if not producto or not producto.get('precio'):
                 return None
 
-            cat = producto.get('categoria_normalizada', '')
-            fmt = producto.get('formato_normalizado', '')
+            cat        = producto.get('categoria_normalizada', '')
+            fmt        = producto.get('formato_normalizado', '')
             super_orig = producto.get('supermercado', '')
             precio_orig = producto['precio']
 
-            # Si no hay categoria o formato, no se puede buscar
             if not cat or not fmt:
                 return None
 
-            # 2) Extraer tipo de producto (sin marca) para busqueda
-            tipo = producto.get('tipo_producto', '')
-            if not tipo:
-                tipo = producto.get('nombre_normalizado', '')
+            tipo = producto.get('tipo_producto', '') or producto.get('nombre_normalizado', '')
             if not tipo:
                 return None
 
-            # Usar primeras 2-3 palabras del tipo como termino
             palabras_tipo = tipo.strip().split()[:3]
             if not palabras_tipo:
                 return None
 
-            # Construir LIKE conditions
             where_parts = []
             params = [cat, fmt, super_orig]
             for p in palabras_tipo:
-                where_parts.append("p.nombre_normalizado LIKE ?")
+                where_parts.append("p.nombre_normalizado LIKE %s")
                 params.append(f"%{p.lower()}%")
 
             where_nombre = " AND ".join(where_parts)
 
-            # 3) Query: mismo cat+fmt, distinto super, nombre similar
             sql = f"""
                 SELECT p.id, p.nombre, p.supermercado,
                        p.formato_normalizado,
@@ -655,9 +617,9 @@ class DatabaseManager:
                         ORDER BY fecha_captura DESC LIMIT 1
                        ) AS precio
                 FROM productos p
-                WHERE p.categoria_normalizada = ?
-                  AND p.formato_normalizado = ?
-                  AND p.supermercado != ?
+                WHERE p.categoria_normalizada = %s
+                  AND p.formato_normalizado = %s
+                  AND p.supermercado != %s
                   AND {where_nombre}
                 ORDER BY precio ASC
                 LIMIT 1
@@ -669,7 +631,6 @@ class DatabaseManager:
                 alt = dict(row)
                 if alt.get('precio') and alt['precio'] < precio_orig:
                     return alt
-
             return None
         except Exception as e:
             logger.error("buscar_alternativa_mas_barata: %s", e)
