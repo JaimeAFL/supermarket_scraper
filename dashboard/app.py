@@ -6,8 +6,6 @@ import sys, os
 _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
-_DB_PATH = os.path.join(_PROJECT_ROOT, "database", "supermercados.db")
-os.environ.setdefault("SUPERMARKET_DB_PATH", _DB_PATH)
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -28,17 +26,12 @@ st.set_page_config(page_title="Supermarket Price Tracker", page_icon="",
                    layout="wide", initial_sidebar_state="expanded")
 
 inyectar_estilos()
-sidebar_branding(_DB_PATH)
 
 @st.cache_resource
 def _init_db():
-    inicializar_base_datos(_DB_PATH)
 
 _init_db()
-db = DatabaseManager(_DB_PATH)
 
-if not os.path.exists(_DB_PATH):
-    st.error(f"No se encontro la base de datos en:\n\n`{_DB_PATH}`")
     st.stop()
 
 st.title("Supermarket Price Tracker")
