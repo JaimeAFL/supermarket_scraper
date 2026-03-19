@@ -81,6 +81,30 @@ def inicializar_base_datos(db_path: str = None) -> str:
         )
     """)
 
+    # ── Listas de la compra ───────────────────────────────────────────
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS listas (
+            id                  SERIAL PRIMARY KEY,
+            nombre              TEXT    NOT NULL,
+            etiqueta            TEXT    DEFAULT '',
+            notas               TEXT    DEFAULT '',
+            fecha_creacion      TEXT    NOT NULL DEFAULT (to_char(NOW(), 'YYYY-MM-DD"T"HH24:MI:SS')),
+            fecha_actualizacion TEXT    NOT NULL DEFAULT (to_char(NOW(), 'YYYY-MM-DD"T"HH24:MI:SS'))
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS lista_productos (
+            id              SERIAL PRIMARY KEY,
+            lista_id        INTEGER NOT NULL REFERENCES listas(id) ON DELETE CASCADE,
+            producto_id     INTEGER NOT NULL REFERENCES productos(id),
+            cantidad        INTEGER NOT NULL DEFAULT 1,
+            notas           TEXT    DEFAULT '',
+            fecha_agregado  TEXT    NOT NULL DEFAULT (to_char(NOW(), 'YYYY-MM-DD"T"HH24:MI:SS')),
+            UNIQUE(lista_id, producto_id)
+        )
+    """)
+
     # ── Índices ───────────────────────────────────────────────────────
     indices = [
         "CREATE INDEX IF NOT EXISTS idx_precios_producto      ON precios(producto_id)",
@@ -91,6 +115,8 @@ def inicializar_base_datos(db_path: str = None) -> str:
         "CREATE INDEX IF NOT EXISTS idx_productos_nombre_norm ON productos(nombre_normalizado)",
         "CREATE INDEX IF NOT EXISTS idx_productos_cat_norm    ON productos(categoria_normalizada)",
         "CREATE INDEX IF NOT EXISTS idx_productos_marca       ON productos(marca)",
+        "CREATE INDEX IF NOT EXISTS idx_lista_productos_lista    ON lista_productos(lista_id)",
+        "CREATE INDEX IF NOT EXISTS idx_lista_productos_producto ON lista_productos(producto_id)",
     ]
     for idx in indices:
         cur.execute(idx)
