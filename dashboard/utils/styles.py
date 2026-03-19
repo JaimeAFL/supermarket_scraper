@@ -16,7 +16,7 @@ COLORES_SUPERMERCADO = {
     'Alcampo':   '#F39C12',
     'Eroski':    '#9B59B6',
     'Consum':    '#E30613',
-    'Condis':    '#CC0000',
+    'Condis':    '#C0392B',
 }
 
 # Tokens de color del sistema
@@ -96,7 +96,7 @@ _CSS_GLOBAL = """
     --color-alcampo: #F39C12;
     --color-eroski: #9B59B6;
     --color-consum: #E30613;
-    --color-condis: #CC0000;
+    --color-condis: #C0392B;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
