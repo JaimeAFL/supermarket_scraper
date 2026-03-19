@@ -30,52 +30,58 @@ Documento técnico que explica cómo funciona internamente el proyecto Supermark
 │                    product_matcher.py                                 │
 │                    Equivalencias cross-retailer (rapidfuzz + SQL)     │
 ├──────────────────────────────────────────────────────────────────────┤
+│                    routing.py                                         │
+│                    Nominatim (geocodificación) · Overpass (tiendas)  │
+│                    OSRM /trip (ruta óptima TSP)                      │
+├──────────────────────────────────────────────────────────────────────┤
 │                    app.py (Streamlit)                                 │
-│                    5 vistas: métricas, histórico, comparador,        │
-│                    favoritos, cesta con exportación email             │
+│                    6 vistas: métricas, histórico, comparador,        │
+│                    favoritos, cesta (envíos + ruta), listas          │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Estructura de archivos
-
-El proyecto usa una estructura plana en la raíz: los scrapers, el dashboard y los módulos de soporte conviven en el directorio principal sin subcarpetas.
 
 ```
 supermarket_scraper/
 ├── .github/workflows/
 │   └── scraper_semanal.yml       # CI/CD: scrapers en paralelo + merge a PostgreSQL
 ├── database/
-│   ├── init_db.py                # Schema + migración automática
-│   └── database_db_manager.py    # CRUD, búsqueda inteligente, upsert
-│
-├── mercadona.py                  # Scraper Mercadona (API REST)
-├── carrefour.py                  # Scraper Carrefour (Playwright)
-├── dia.py                        # Scraper Dia (API + cookie automática)
-├── alcampo.py                    # Scraper Alcampo (Playwright)
-├── eroski.py                     # Scraper Eroski (Playwright)
-├── consum.py                     # Scraper Consum (API REST)
-├── condis.py                     # Scraper Condis (API Empathy, en integración)
-├── cookie_manager.py             # Gestión y obtención automática de cookies
-│
-├── normalizer.py                 # Motor NLP: tipo, marca, categoría, formato
-├── marcas.json                   # Diccionario de 1.480 marcas
-├── product_matcher.py            # Matching cross-retailer con RapidFuzz
-│
-├── app.py                        # Dashboard principal (métricas + búsqueda)
-├── 1_Historico_precios.py        # Página: evolución temporal de precios
-├── 2_Comparador.py               # Página: comparador por precio unitario
-├── 3_Favoritos.py                # Página: lista de seguimiento
-├── 4_Cesta.py                    # Página: lista de la compra + exportación
-├── components.py                 # Componentes UI reutilizables
-├── charts.py                     # Gráficos Plotly
-├── styles.py                     # Estilos CSS del dashboard
-├── export.py                     # Exportación y enlaces de email
-│
+│   ├── init_db.py                # Schema + migración automática (incluye listas, envíos)
+│   └── database_db_manager.py    # CRUD, búsqueda inteligente, upsert, listas, envíos
+├── scraper/
+│   ├── mercadona.py              # Scraper Mercadona (API REST)
+│   ├── carrefour.py              # Scraper Carrefour (Playwright)
+│   ├── dia.py                    # Scraper Dia (API + cookie automática)
+│   ├── alcampo.py                # Scraper Alcampo (Playwright)
+│   ├── eroski.py                 # Scraper Eroski (Playwright)
+│   ├── consum.py                 # Scraper Consum (API REST)
+│   ├── condis.py                 # Scraper Condis (API Empathy)
+│   └── cookie_manager.py         # Gestión y obtención automática de cookies
+├── matching/
+│   ├── normalizer.py             # Motor NLP: tipo, marca, categoría, formato
+│   ├── marcas.json               # Diccionario de 1.480 marcas
+│   └── product_matcher.py        # Matching cross-retailer con RapidFuzz
+├── dashboard/
+│   ├── app.py                    # Dashboard principal (métricas + búsqueda)
+│   ├── pages/
+│   │   ├── 1_Historico_precios.py        # Página: evolución temporal de precios
+│   │   ├── 2_Comparador.py               # Página: comparador por precio unitario
+│   │   ├── 3_Favoritos.py                # Página: lista de seguimiento
+│   │   ├── 4_Cesta.py                    # Página: cesta + envíos + ruta óptima
+│   │   └── 5_Listas.py                   # Página: listas reutilizables + exportación
+│   └── utils/
+│       ├── components.py                 # Componentes UI reutilizables
+│       ├── charts.py                     # Gráficos Plotly
+│       ├── styles.py                     # Estilos CSS del dashboard
+│       └── export.py                     # Exportación, PDF y enlaces de email
+├── tests/
+│   ├── test_listas.py            # Tests unitarios: listas y envíos (24 tests)
+│   └── test_routing.py           # Tests unitarios: routing con mocks (19 tests)
+├── routing.py                    # Geocodificación + búsqueda tiendas + ruta óptima
 ├── main.py                       # Orquestador: todos los scrapers secuencial
 ├── run_scraper.py                # Ejecución individual + flags --export-csv, --skip-db
 ├── import_results.py             # Merge de CSVs paralelos → DB
-├── init_db.py                    # Schema + migración (raíz, usado por CI/CD)
-│
 ├── requirements.txt
 ├── example.env
 └── README.md
@@ -160,13 +166,22 @@ Las búsquedas del dashboard usan dos niveles con `UNION ALL`:
 
 ### 6. Visualización (Dashboard)
 
-`app.py` es una app Streamlit multipágina con cinco vistas:
+`app.py` es una app Streamlit multipágina con seis vistas:
 
-- **Principal:** métricas globales, distribución de precios (histograma con mediana), búsqueda rápida con filtro de categoría.
-- **Histórico:** gráfico temporal de un producto con min/max/media y evolución semanal.
-- **Comparador:** tabla resumen por supermercado (más barato, mediana, más caro, diferencia porcentual) + gráfico de barras horizontales por precio unitario.
+- **Principal:** métricas globales, distribución de precios (histograma con mediana), búsqueda rápida con filtro de categoría y botón "Añadir a lista".
+- **Histórico:** gráfico temporal de un producto con min/max/media y evolución semanal. Incluye botón "Añadir a lista".
+- **Comparador:** tabla resumen por supermercado (más barato, mediana, más caro, diferencia porcentual) + widget "Añadir a lista" por producto.
 - **Favoritos:** lista de seguimiento con búsqueda integrada.
-- **Cesta:** lista de la compra con botones de email (Gmail, Outlook, Yahoo) sin necesidad de servidor SMTP.
+- **Cesta:** lista de la compra con desglose de envíos por supermercado (umbrales, pedido mínimo, coste real), exportación PDF/email y sección de ruta óptima entre tiendas físicas.
+- **Listas:** listas de la compra reutilizables con etiquetas (semanal, barbacoa, cumpleaños…), gestión completa (crear, editar, duplicar, eliminar), exportación PDF/email y carga directa en cesta.
+
+### 7. Routing (APIs externas gratuitas)
+
+`routing.py` proporciona tres funciones independientes:
+
+- **`geocodificar(direccion)`** — Llama a Nominatim (OpenStreetMap) para convertir una dirección o código postal en coordenadas. Respeta el límite de 1 req/seg con `time.sleep(1)`.
+- **`buscar_supermercados_cercanos(lat, lon, supermercados, radio_metros)`** — Consulta Overpass API con una query que busca nodos y ways de los supermercados indicados dentro del radio. Devuelve solo la tienda más cercana por cadena.
+- **`calcular_ruta_optima(origen, paradas, modo)`** — Llama a OSRM `/trip` con `source=first`, `destination=last`, `roundtrip=true`. Resuelve el TSP y devuelve las paradas reordenadas, geometría GeoJSON para Folium, tramos y métricas totales.
 
 ## Modelo de datos (PostgreSQL)
 
@@ -175,7 +190,7 @@ Las búsquedas del dashboard usan dos niveles con `UNION ALL`:
 │     productos        │     │     precios      │     │  equivalencias   │
 ├──────────────────────┤     ├──────────────────┤     ├──────────────────┤
 │ id (PK, SERIAL)      │◄───┐│ id (PK, SERIAL)  │     │ id (PK)          │
-│ id_externo           │    ││ producto_id (FK)─┼────►│ nombre_comun     │
+│ id_externo           │    ││ producto_id (FK) │     │ nombre_comun     │
 │ nombre               │    ││ precio           │     │ prod_mercadona_id│
 │ supermercado         │    ││ precio_por_unidad│     │ prod_carrefour_id│
 │ categoria            │    ││ fecha_captura    │     │ prod_dia_id      │
@@ -188,7 +203,30 @@ Las búsquedas del dashboard usan dos niveles con `UNION ALL`:
 │ marca                │       │ fecha_agregado   │
 │ nombre_normalizado   │       └──────────────────┘
 │ categoria_normalizada│
-└──────────────────────┘
+└──────────┬───────────┘
+           │
+           │         ┌─────────────────────┐     ┌──────────────────────┐
+           │         │       listas        │     │       envios         │
+           │         ├─────────────────────┤     ├──────────────────────┤
+           │         │ id (PK, SERIAL)     │     │ id (PK, SERIAL)      │
+           │         │ nombre              │     │ supermercado (UNIQUE) │
+           │         │ etiqueta            │     │ coste_envio          │
+           │         │ notas               │     │ umbral_gratis        │
+           │         │ fecha_creacion      │     │ pedido_minimo        │
+           │         │ fecha_actualizacion │     │ notas                │
+           │         └────────┬────────────┘     │ fecha_verificacion   │
+           │                  │                  └──────────────────────┘
+           │         ┌────────▼────────────┐
+           │         │  lista_productos    │
+           │         ├─────────────────────┤
+           └────────►│ producto_id (FK)    │
+                     │ lista_id (FK)       │
+                     │ cantidad            │
+                     │ notas               │
+                     │ fecha_agregado      │
+                     │ UNIQUE(lista_id,    │
+                     │        producto_id) │
+                     └─────────────────────┘
 ```
 
 Índices para búsqueda rápida:
@@ -196,6 +234,8 @@ Las búsquedas del dashboard usan dos niveles con `UNION ALL`:
 - `idx_productos_nombre_norm` → búsqueda por nombre_normalizado
 - `idx_productos_cat_norm` → filtro por categoría normalizada
 - `idx_productos_marca` → filtro por marca
+- `idx_lista_productos_lista` → búsqueda de productos por lista
+- `idx_lista_productos_producto` → búsqueda de listas por producto
 
 ## Automatización (GitHub Actions)
 
@@ -233,5 +273,20 @@ python run_scraper.py dia --export-csv export/dia.csv --skip-db
 python import_results.py export/*.csv
 
 # Dashboard
-streamlit run app.py
+streamlit run dashboard/app.py
 ```
+
+## Tests
+
+```bash
+# Todos los tests (43 en total)
+python -m pytest tests/ -v
+
+# Solo tests de listas y envíos
+python -m pytest tests/test_listas.py -v
+
+# Solo tests de routing
+python -m pytest tests/test_routing.py -v
+```
+
+Los tests usan `unittest.mock` para no depender de PostgreSQL real ni de las APIs externas (Nominatim, Overpass, OSRM).
