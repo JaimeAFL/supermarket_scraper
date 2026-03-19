@@ -392,7 +392,7 @@ if cesta:
         ("price_check", f"{totales['optimizado']:.2f} €", "Optimizado"),
     ])
 
-    # Desglose por supermercado
+    # Desglose por supermercado (con envíos)
     st.markdown("")
     encabezado("Desglose por supermercado", "storefront", nivel=3)
 
@@ -400,22 +400,72 @@ if cesta:
     for item in cesta:
         s = item['supermercado']
         if s not in por_super:
-            por_super[s] = {'productos': 0, 'subtotal': 0}
+            por_super[s] = {'productos': 0, 'subtotal': 0.0}
         por_super[s]['productos'] += item['cantidad']
         por_super[s]['subtotal'] += item['precio'] * item['cantidad']
 
-    datos_desglose = [
-        {
+    datos_desglose = []
+    total_envios = 0.0
+    avisos_pedido_minimo = []
+
+    for s, v in sorted(por_super.items()):
+        subtotal = v['subtotal']
+        envio = db.obtener_envio_supermercado(s)
+
+        if envio:
+            coste_envio = envio['coste_envio']
+            umbral = envio.get('umbral_gratis')
+            minimo = envio.get('pedido_minimo')
+
+            if minimo and subtotal < minimo:
+                faltan_min = minimo - subtotal
+                avisos_pedido_minimo.append(
+                    f"**{s}**: pedido mínimo {minimo:.2f} €. "
+                    f"Te faltan **{faltan_min:.2f} €**.")
+                envio_txt = f"{coste_envio:.2f} €"
+                nota_envio = f"Mínimo no alcanzado ({minimo:.2f} €)"
+            elif umbral and subtotal >= umbral:
+                coste_envio = 0.0
+                envio_txt = "Gratis"
+                nota_envio = f"Envío gratis (≥ {umbral:.2f} €)"
+            else:
+                if umbral:
+                    faltan = umbral - subtotal
+                    nota_envio = f"Te faltan {faltan:.2f} € para envío gratis"
+                else:
+                    nota_envio = envio.get('notas', '')
+                envio_txt = f"{coste_envio:.2f} €"
+        else:
+            coste_envio = 0.0
+            envio_txt = "—"
+            nota_envio = "Sin datos de envío"
+
+        total_envios += coste_envio
+        datos_desglose.append({
             'Supermercado': s,
-            'Productos': v['productos'],
-            'Subtotal': f"{v['subtotal']:.2f} €",
-        }
-        for s, v in sorted(por_super.items())
-    ]
+            'Unidades': v['productos'],
+            'Subtotal': f"{subtotal:.2f} €",
+            'Envío': envio_txt,
+            'Total c/envío': f"{subtotal + coste_envio:.2f} €",
+            'Nota envío': nota_envio,
+        })
+
+    if avisos_pedido_minimo:
+        for aviso in avisos_pedido_minimo:
+            st.warning(aviso)
+
     if datos_desglose:
         st.dataframe(
             pd.DataFrame(datos_desglose),
             use_container_width=True, hide_index=True)
+        total_con_envio = totales['total'] + total_envios
+        st.markdown(
+            f"**Total productos:** {totales['total']:.2f} €  ·  "
+            f"**Total envíos:** {total_envios:.2f} €  ·  "
+            f"**Total real:** {total_con_envio:.2f} €")
+        st.caption(
+            "Los costes de envío son orientativos y pueden variar según "
+            "zona, promociones o condiciones del momento.")
 
     # Botones de acción global
     st.markdown("")
