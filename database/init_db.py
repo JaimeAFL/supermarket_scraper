@@ -105,6 +105,32 @@ def inicializar_base_datos(db_path: str = None) -> str:
         )
     """)
 
+    # ── Envíos ────────────────────────────────────────────────────────
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS envios (
+            id                  SERIAL PRIMARY KEY,
+            supermercado        TEXT    NOT NULL UNIQUE,
+            coste_envio         REAL    NOT NULL,
+            umbral_gratis       REAL,
+            pedido_minimo       REAL,
+            notas               TEXT    DEFAULT '',
+            fecha_verificacion  TEXT    NOT NULL DEFAULT (to_char(NOW(), 'YYYY-MM-DD"T"HH24:MI:SS'))
+        )
+    """)
+
+    cur.execute("""
+        INSERT INTO envios (supermercado, coste_envio, umbral_gratis, pedido_minimo, notas)
+        VALUES
+            ('Mercadona', 7.70, NULL, 50.0, 'Pedido mínimo 50€. Sin envío gratis.'),
+            ('Carrefour', 7.95, 99.0, NULL, 'Envío gratis a partir de 99€.'),
+            ('Dia',       3.99, 39.0, NULL, 'Envío gratis a partir de 39€ con Club Dia.'),
+            ('Alcampo',   6.90, 80.0, NULL, 'Envío gratis a partir de 80€.'),
+            ('Eroski',    5.95, 50.0, NULL, 'Envío gratis a partir de 50€.'),
+            ('Consum',    7.50, 60.0, NULL, 'Envío gratis a partir de 60€ en muchas zonas.'),
+            ('Condis',    4.99, 49.0, NULL, 'Envío gratis a partir de 49€.')
+        ON CONFLICT (supermercado) DO NOTHING
+    """)
+
     # ── Índices ───────────────────────────────────────────────────────
     indices = [
         "CREATE INDEX IF NOT EXISTS idx_precios_producto      ON precios(producto_id)",
