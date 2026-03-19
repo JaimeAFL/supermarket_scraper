@@ -635,3 +635,191 @@ class DatabaseManager:
         except Exception as e:
             logger.error("buscar_alternativa_mas_barata: %s", e)
             return None
+
+    # ── Listas de la compra ───────────────────────────────────────────
+
+    def crear_lista(self, nombre: str, etiqueta: str = "", notas: str = "") -> int:
+        """Crea una lista nueva. Devuelve el id de la lista creada."""
+        cur = self._cursor()
+        cur.execute("""
+            INSERT INTO listas (nombre, etiqueta, notas)
+            VALUES (%s, %s, %s)
+            RETURNING id
+        """, (nombre, etiqueta, notas))
+        lista_id = cur.fetchone()["id"]
+        self._conn.commit()
+        return lista_id
+
+    def obtener_listas(self) -> pd.DataFrame:
+        """Devuelve todas las listas con conteo de productos y coste total."""
+        cur = self._cursor()
+        cur.execute("""
+            SELECT l.id, l.nombre, l.etiqueta, l.notas,
+                   l.fecha_creacion, l.fecha_actualizacion,
+                   COUNT(lp.id) AS num_productos,
+                   COALESCE(SUM(
+                       lp.cantidad * (
+                           SELECT precio FROM precios
+                           WHERE producto_id = lp.producto_id
+                           ORDER BY fecha_captura DESC LIMIT 1
+                       )
+                   ), 0) AS coste_total
+            FROM listas l
+            LEFT JOIN lista_productos lp ON lp.lista_id = l.id
+            GROUP BY l.id
+            ORDER BY l.fecha_actualizacion DESC
+        """)
+        rows = cur.fetchall()
+        return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+    def obtener_lista_detalle(self, lista_id: int) -> pd.DataFrame:
+        """Devuelve los productos de una lista con precio actual y supermercado."""
+        cur = self._cursor()
+        cur.execute("""
+            SELECT lp.id AS lista_producto_id,
+                   lp.cantidad, lp.notas AS notas_producto,
+                   p.id AS producto_id, p.nombre, p.supermercado,
+                   p.marca, p.formato_normalizado, p.categoria_normalizada,
+                   p.url,
+                   (SELECT precio FROM precios
+                    WHERE producto_id = p.id
+                    ORDER BY fecha_captura DESC LIMIT 1
+                   ) AS precio
+            FROM lista_productos lp
+            JOIN productos p ON p.id = lp.producto_id
+            WHERE lp.lista_id = %s
+            ORDER BY p.supermercado, p.nombre
+        """, (lista_id,))
+        rows = cur.fetchall()
+        return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+    def añadir_producto_a_lista(self, lista_id: int, producto_id: int, cantidad: int = 1) -> bool:
+        """Añade un producto a una lista. Si ya existe, suma la cantidad."""
+        cur = self._cursor()
+        try:
+            cur.execute("""
+                INSERT INTO lista_productos (lista_id, producto_id, cantidad)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (lista_id, producto_id) DO UPDATE SET
+                    cantidad = lista_productos.cantidad + EXCLUDED.cantidad,
+                    fecha_agregado = to_char(NOW(), 'YYYY-MM-DD"T"HH24:MI:SS')
+            """, (lista_id, producto_id, cantidad))
+            cur.execute("""
+                UPDATE listas SET fecha_actualizacion = to_char(NOW(), 'YYYY-MM-DD"T"HH24:MI:SS')
+                WHERE id = %s
+            """, (lista_id,))
+            self._conn.commit()
+            return True
+        except Exception as e:
+            logger.error("añadir_producto_a_lista: %s", e)
+            return False
+
+    def quitar_producto_de_lista(self, lista_id: int, producto_id: int) -> bool:
+        """Elimina un producto de una lista."""
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "DELETE FROM lista_productos WHERE lista_id=%s AND producto_id=%s",
+                (lista_id, producto_id))
+            cur.execute("""
+                UPDATE listas SET fecha_actualizacion = to_char(NOW(), 'YYYY-MM-DD"T"HH24:MI:SS')
+                WHERE id = %s
+            """, (lista_id,))
+            self._conn.commit()
+            return True
+        except Exception as e:
+            logger.error("quitar_producto_de_lista: %s", e)
+            return False
+
+    def actualizar_cantidad_lista(self, lista_id: int, producto_id: int, cantidad: int) -> bool:
+        """Actualiza la cantidad de un producto en una lista."""
+        cur = self._cursor()
+        try:
+            cur.execute("""
+                UPDATE lista_productos SET cantidad = %s
+                WHERE lista_id = %s AND producto_id = %s
+            """, (cantidad, lista_id, producto_id))
+            self._conn.commit()
+            return True
+        except Exception as e:
+            logger.error("actualizar_cantidad_lista: %s", e)
+            return False
+
+    def eliminar_lista(self, lista_id: int) -> bool:
+        """Elimina una lista y todos sus productos (CASCADE)."""
+        cur = self._cursor()
+        try:
+            cur.execute("DELETE FROM listas WHERE id=%s", (lista_id,))
+            self._conn.commit()
+            return True
+        except Exception as e:
+            logger.error("eliminar_lista: %s", e)
+            return False
+
+    def renombrar_lista(self, lista_id: int, nombre: str, etiqueta: str = None, notas: str = None):
+        """Actualiza nombre, etiqueta y/o notas de una lista."""
+        cur = self._cursor()
+        sets = ["nombre = %s", "fecha_actualizacion = to_char(NOW(), 'YYYY-MM-DD\"T\"HH24:MI:SS')"]
+        params = [nombre]
+        if etiqueta is not None:
+            sets.append("etiqueta = %s")
+            params.append(etiqueta)
+        if notas is not None:
+            sets.append("notas = %s")
+            params.append(notas)
+        params.append(lista_id)
+        cur.execute(f"UPDATE listas SET {', '.join(sets)} WHERE id = %s", params)
+        self._conn.commit()
+
+    def duplicar_lista(self, lista_id: int, nuevo_nombre: str) -> int:
+        """Duplica una lista existente con un nuevo nombre. Devuelve el id de la nueva lista."""
+        cur = self._cursor()
+        cur.execute("SELECT etiqueta, notas FROM listas WHERE id=%s", (lista_id,))
+        orig = cur.fetchone()
+        if not orig:
+            raise ValueError(f"Lista {lista_id} no encontrada")
+
+        nuevo_id = self.crear_lista(nuevo_nombre, orig["etiqueta"], orig["notas"])
+
+        cur.execute(
+            "SELECT producto_id, cantidad, notas FROM lista_productos WHERE lista_id=%s",
+            (lista_id,))
+        for row in cur.fetchall():
+            cur.execute("""
+                INSERT INTO lista_productos (lista_id, producto_id, cantidad, notas)
+                VALUES (%s, %s, %s, %s)
+            """, (nuevo_id, row["producto_id"], row["cantidad"], row["notas"]))
+        self._conn.commit()
+        return nuevo_id
+
+    def cargar_lista_en_cesta(self, lista_id: int) -> list:
+        """Devuelve los productos de una lista en formato compatible con session_state['cesta'].
+
+        Permite cargar una lista guardada directamente en la cesta activa
+        para operar con ella (optimizar, exportar, calcular ruta, etc.).
+        """
+        df = self.obtener_lista_detalle(lista_id)
+        if df.empty:
+            return []
+
+        cesta = []
+        for _, row in df.iterrows():
+            item = {
+                'producto_id': int(row['producto_id']),
+                'nombre': row.get('nombre', ''),
+                'supermercado': row.get('supermercado', ''),
+                'precio': float(row.get('precio', 0)) if row.get('precio') else 0,
+                'formato_normalizado': row.get('formato_normalizado', ''),
+                'marca': row.get('marca', ''),
+                'cantidad': int(row.get('cantidad', 1)),
+                'alternativa_id': None,
+                'alternativa_nombre': None,
+                'alternativa_super': None,
+                'alternativa_precio': None,
+                'original_id': None,
+                'original_nombre': None,
+                'original_super': None,
+                'original_precio': None,
+            }
+            cesta.append(item)
+        return cesta
