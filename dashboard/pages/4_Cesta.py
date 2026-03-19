@@ -24,6 +24,9 @@ from dashboard.utils.components import (
 from dashboard.utils.export import (
     generar_pdf_cesta, generar_enlaces_email,
 )
+from routing import geocodificar, buscar_supermercados_cercanos, calcular_ruta_optima
+import folium
+from streamlit_folium import st_folium
 
 st.set_page_config(page_title="Cesta de la compra", page_icon="",
                    layout="wide")
@@ -595,6 +598,201 @@ if cesta:
             f'<span style="{_icon_circle_style}"><img src="{_LOGO_YAHOO}" style="{_icon_img_style}" alt="Yahoo"></span>'
             f'<span style="{_label_style}">Yahoo</span></a>',
             unsafe_allow_html=True)
+
+    # ═══════════════════════════════════════════════════════════════
+    # SECCIÓN E: RUTA DE COMPRA
+    # ═══════════════════════════════════════════════════════════════
+    st.markdown("---")
+    encabezado("Ruta de compra", "route", nivel=3)
+    st.caption(
+        "Encuentra la tienda más cercana de cada supermercado de tu cesta "
+        "y calcula la ruta óptima entre ellas.")
+
+    # Cachear resultados de ruta en session_state
+    if 'ruta_cache' not in st.session_state:
+        st.session_state['ruta_cache'] = {
+            'direccion': None, 'tiendas': None, 'ruta': None,
+            'origen': None, 'supermercados': None,
+        }
+
+    col_dir, col_modo, col_radio = st.columns([3, 1, 1])
+    with col_dir:
+        direccion_ruta = st.text_input(
+            "Tu dirección o código postal:",
+            placeholder="Ej: Calle Mayor 1, Madrid / 28001",
+            key="ruta_direccion")
+    with col_modo:
+        modos = {"Coche": "driving", "A pie": "walking", "Bici": "cycling"}
+        modo_sel = st.selectbox("Transporte:", list(modos.keys()),
+                                key="ruta_modo")
+    with col_radio:
+        radio_km = st.slider("Radio (km):", 1, 15, 5, key="ruta_radio")
+
+    if st.button("Calcular ruta", key="ruta_calcular", type="primary",
+                  use_container_width=True):
+        if not direccion_ruta.strip():
+            st.error("Introduce una dirección o código postal.")
+        else:
+            supermercados_cesta = list(set(
+                item['supermercado'] for item in cesta))
+
+            with st.spinner("Geocodificando dirección..."):
+                origen = geocodificar(direccion_ruta.strip())
+
+            if not origen:
+                st.error(
+                    "No se pudo encontrar la dirección. "
+                    "Prueba con otra más específica.")
+            else:
+                with st.spinner(
+                    f"Buscando tiendas en un radio de {radio_km} km..."
+                ):
+                    tiendas_result = buscar_supermercados_cercanos(
+                        origen['lat'], origen['lon'],
+                        supermercados_cesta,
+                        radio_metros=radio_km * 1000)
+
+                # Recopilar tiendas encontradas
+                tiendas_encontradas = []
+                tiendas_no_encontradas = []
+                for s, lista_tiendas in tiendas_result.items():
+                    if lista_tiendas:
+                        t = lista_tiendas[0]
+                        tiendas_encontradas.append({
+                            **t, "supermercado": s})
+                    else:
+                        tiendas_no_encontradas.append(s)
+
+                # Avisos de tiendas no encontradas
+                for s in tiendas_no_encontradas:
+                    st.warning(
+                        f"No se encontró tienda de **{s}** "
+                        f"en un radio de {radio_km} km.")
+
+                ruta_datos = None
+                if tiendas_encontradas:
+                    with st.spinner("Calculando ruta óptima..."):
+                        ruta_datos = calcular_ruta_optima(
+                            origen, tiendas_encontradas,
+                            modo=modos[modo_sel])
+
+                    if not ruta_datos:
+                        st.info(
+                            "No se pudo calcular la ruta óptima. "
+                            "Mostrando tiendas en el mapa sin ruta.")
+
+                # Guardar en cache
+                st.session_state['ruta_cache'] = {
+                    'direccion': direccion_ruta.strip(),
+                    'origen': origen,
+                    'tiendas': tiendas_encontradas,
+                    'ruta': ruta_datos,
+                    'supermercados': supermercados_cesta,
+                }
+
+    # ── Renderizar mapa y resultados desde cache ──
+    cache = st.session_state['ruta_cache']
+    if cache.get('origen') and cache.get('tiendas') is not None:
+        origen = cache['origen']
+        tiendas_encontradas = cache['tiendas']
+        ruta_datos = cache['ruta']
+
+        st.markdown(
+            f"Ubicación: **{origen.get('display_name', cache['direccion'])}**")
+
+        # Generar mapa Folium
+        mapa = folium.Map(
+            location=[origen["lat"], origen["lon"]],
+            zoom_start=14,
+            tiles="OpenStreetMap",
+        )
+
+        # Marcador de casa
+        folium.Marker(
+            location=[origen["lat"], origen["lon"]],
+            popup="Tu ubicación",
+            icon=folium.Icon(color="black", icon="home", prefix="fa"),
+        ).add_to(mapa)
+
+        # Marcadores de tiendas
+        for tienda in tiendas_encontradas:
+            color_hex = COLORES_SUPERMERCADO.get(
+                tienda["supermercado"], "#95A5A6")
+            folium.Marker(
+                location=[tienda["lat"], tienda["lon"]],
+                popup=(f"{tienda['nombre']}<br>"
+                       f"{tienda.get('direccion', '')}<br>"
+                       f"{tienda.get('distancia_m', '?')} m"),
+                icon=folium.Icon(
+                    color="green",
+                    icon="shopping-cart",
+                    prefix="fa",
+                    icon_color=color_hex,
+                ),
+            ).add_to(mapa)
+
+        # Línea de ruta
+        if ruta_datos and ruta_datos.get("geometria"):
+            # GeoJSON viene en [lon, lat], Folium espera [lat, lon]
+            puntos_ruta = [[p[1], p[0]]
+                           for p in ruta_datos["geometria"]]
+            folium.PolyLine(
+                locations=puntos_ruta,
+                color="#1565C0",
+                weight=4,
+                opacity=0.8,
+            ).add_to(mapa)
+
+        # Ajustar zoom para que se vean todos los puntos
+        todos_puntos = [[origen["lat"], origen["lon"]]]
+        for t in tiendas_encontradas:
+            todos_puntos.append([t["lat"], t["lon"]])
+        if len(todos_puntos) > 1:
+            mapa.fit_bounds(todos_puntos)
+
+        st_folium(mapa, width=700, height=450)
+
+        # Info de ruta debajo del mapa
+        if ruta_datos:
+            fila_metricas([
+                ("route", f"{ruta_datos['distancia_total_km']} km",
+                 "Distancia total"),
+                ("schedule",
+                 f"{ruta_datos['duracion_total_min']} min",
+                 "Duración estimada"),
+                ("storefront",
+                 str(len(tiendas_encontradas)),
+                 "Tiendas"),
+            ])
+
+            # Orden de paradas
+            encabezado("Orden de paradas", "format_list_numbered",
+                       nivel=3)
+            for idx, parada in enumerate(
+                    ruta_datos.get("paradas_ordenadas", []), 1):
+                tramo = (ruta_datos["tramos"][idx - 1]
+                         if idx - 1 < len(ruta_datos["tramos"])
+                         else None)
+                tramo_txt = ""
+                if tramo:
+                    tramo_txt = (
+                        f" — {tramo['distancia_km']} km, "
+                        f"{tramo['duracion_min']} min")
+                st.markdown(
+                    f"**{idx}.** {parada.get('nombre', '')} "
+                    f"({parada.get('supermercado', '')})"
+                    f"{tramo_txt}")
+
+        elif tiendas_encontradas:
+            st.info(
+                f"Se encontraron {len(tiendas_encontradas)} tiendas, "
+                f"pero no se pudo calcular la ruta óptima.")
+
+        if not tiendas_encontradas:
+            estado_vacio(
+                "wrong_location",
+                "No se encontraron tiendas cercanas",
+                "Prueba aumentando el radio de búsqueda.")
 
 else:
     # Cesta vacía
