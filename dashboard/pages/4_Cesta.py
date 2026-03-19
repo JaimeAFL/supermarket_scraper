@@ -98,6 +98,7 @@ def _añadir_a_cesta(db, producto_id, cantidad):
         'precio': float(prod.get('precio', 0)),
         'formato_normalizado': prod.get('formato_normalizado', ''),
         'marca': prod.get('marca', ''),
+        'url_imagen': prod.get('url_imagen', ''),
         'cantidad': cantidad,
         'alternativa_id': int(alt['id']) if alt else None,
         'alternativa_nombre': alt.get('nombre') if alt else None,
@@ -243,9 +244,20 @@ def _tarjeta_cesta_html(item, indice):
             'style="font-size:14px">check_circle</span>'
             'Mejor precio</span>')
 
+    url_imagen = item.get('url_imagen', '')
+    img_html = ""
+    if url_imagen:
+        img_html = (
+            f'<img src="{url_imagen}" '
+            f'style="width:56px;height:56px;object-fit:contain;'
+            f'border-radius:8px;background:#F5F7FA;flex-shrink:0;margin-right:10px" '
+            f'onerror="this.style.display=\'none\'" alt="">'
+        )
+
     return (
         f'<div class="product-card" style="margin-bottom:6px">'
         f'<div class="product-super" style="background:{color}"></div>'
+        f'{img_html}'
         f'<div class="product-info">'
         f'<div class="product-name" title="{item["nombre"]}">'
         f'{item["nombre"]}</div>'
