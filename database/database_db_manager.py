@@ -792,6 +792,22 @@ class DatabaseManager:
         self._conn.commit()
         return nuevo_id
 
+    # ── Envíos ────────────────────────────────────────────────────────
+
+    def obtener_envios(self) -> pd.DataFrame:
+        """Devuelve la tabla de costes de envío de todos los supermercados."""
+        cur = self._cursor()
+        cur.execute("SELECT * FROM envios ORDER BY supermercado")
+        rows = cur.fetchall()
+        return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+    def obtener_envio_supermercado(self, supermercado: str) -> dict:
+        """Devuelve los datos de envío de un supermercado concreto."""
+        cur = self._cursor()
+        cur.execute("SELECT * FROM envios WHERE supermercado=%s", (supermercado,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
     def cargar_lista_en_cesta(self, lista_id: int) -> list:
         """Devuelve los productos de una lista en formato compatible con session_state['cesta'].
 
