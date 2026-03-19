@@ -1,6 +1,6 @@
 # Supermarket Price Tracker
 
-Herramienta que extrae los catálogos completos de los principales supermercados españoles, normaliza los productos automáticamente y ofrece un dashboard interactivo para comparar precios, ver su evolución semanal y guardar favoritos.
+Herramienta que extrae los catálogos completos de los principales supermercados españoles, normaliza los productos automáticamente y ofrece un dashboard interactivo para comparar precios, ver su evolución semanal, guardar favoritos, gestionar listas de la compra reutilizables y calcular la ruta óptima entre tiendas.
 
 ---
 ## Enlace a la aplicación
@@ -17,6 +17,9 @@ Cada semana, de forma automática, la aplicación:
 2. **Normaliza** cada producto: detecta la marca, extrae el tipo de producto ("leche entera", "café molido") y calcula el precio por litro o por kilo para poder comparar de verdad
 3. **Guarda** todo en una base de datos con histórico — así puedes ver si el precio de tu yogur favorito ha subido
 4. **Actualiza** el dashboard, donde puedes buscar cualquier producto y ver al instante dónde está más barato
+5. **Gestiona listas de la compra** reutilizables (semanal, barbacoa, cumpleaños...) con exportación a PDF y email
+6. **Informa sobre costes de envío** de cada supermercado y calcula cuánto falta para envío gratis
+7. **Calcula la ruta óptima** entre las tiendas físicas donde comprar, usando OpenStreetMap y OSRM sin API key
 
 ---
 
@@ -43,13 +46,14 @@ Upsert en PostgreSQL: si el producto ya existe (por id externo + supermercado) s
 
 ### 4. Visualización
 
-Dashboard Streamlit con 5 vistas:
+Dashboard Streamlit con 6 vistas:
 
 - **Principal**: métricas globales, buscador, distribución de precios por categoría
 - **Histórico**: evolución semanal del precio de cualquier producto
 - **Comparador**: tabla con el precio más barato por supermercado y diferencias porcentuales
 - **Favoritos**: lista guardada con seguimiento de precios
-- **Cesta**: selección de productos con exportación por email (Gmail, Outlook, Yahoo)
+- **Cesta**: selección de productos con desglose de envíos, exportación por email y ruta óptima entre tiendas
+- **Listas**: listas de la compra reutilizables con etiquetas, exportación a PDF/email y carga directa en cesta
 
 ---
 
@@ -78,15 +82,18 @@ Dashboard Streamlit con 5 vistas:
 - [x] 28 categorías normalizadas
 - [x] Búsqueda inteligente por tipo de producto
 - [x] Base de datos PostgreSQL con histórico automático
-- [x] Dashboard Streamlit (5 páginas)
+- [x] Dashboard Streamlit (6 páginas)
 - [x] Comparador por precio unitario (€/L, €/kg)
 - [x] Sistema de favoritos
-- [x] Cesta de la compra con exportación por email
+- [x] Cesta de la compra con exportación por email y PDF
 - [x] GitHub Actions con jobs paralelos
 - [x] Sistema de logging por ejecución
 - [x] Gestión de procesos Chromium huérfanos
 - [x] Timeouts configurables por scraper
 - [x] Migración de SQLite a PostgreSQL (Aiden)
+- [x] Listas de la compra reutilizables con etiquetas
+- [x] Información de costes de envío por supermercado
+- [x] Ruta óptima entre tiendas (Nominatim + Overpass + OSRM)
 - [ ] API REST para consultas externas
 
 ---
@@ -119,13 +126,18 @@ supermarket_scraper/
 │   │   ├── 1_Historico_precios.py        # Evolución de precio por producto
 │   │   ├── 2_Comparador.py               # Comparador por precio unitario entre supermercados
 │   │   ├── 3_Favoritos.py                # Lista de favoritos con alertas
-│   │   └── 4_Cesta.py                    # Cesta de la compra con exportación por email
+│   │   ├── 4_Cesta.py                    # Cesta con envíos, exportación email/PDF y ruta óptima
+│   │   └── 5_Listas.py                   # Listas reutilizables con etiquetas y exportación
 │   └── utils/
 │       ├── components.py                 # Helpers compartidos del dashboard
 │       ├── charts.py                     # Gráficos Plotly (histogramas, líneas, barras)
 │       ├── styles.py                     # Estilos CSS del dashboard
-│       └── export.py                     # Generación de enlaces email
+│       └── export.py                     # Generación de enlaces email y PDF
 │
+├── routing.py                    # Geocodificación, búsqueda de tiendas y ruta óptima
+├── tests/
+│   ├── test_listas.py            # Tests unitarios para métodos de listas y envíos
+│   └── test_routing.py           # Tests unitarios para routing (mocks de APIs externas)
 ├── main.py                       # Orquestador principal (todos los scrapers)
 ├── run_scraper.py                # Ejecución individual + export CSV para CI/CD
 ├── import_results.py             # Merge de CSVs paralelos → base de datos
@@ -146,8 +158,12 @@ supermarket_scraper/
 | Dashboard | Streamlit (multi-página) + Plotly |
 | Normalización | Motor NLP propio (reglas + taxonomía) |
 | Matching | RapidFuzz (similitud de texto) |
+| Mapas y rutas | Folium + streamlit-folium |
+| Geocodificación | Nominatim (OpenStreetMap, sin API key) |
+| Búsqueda de tiendas | Overpass API (OpenStreetMap, sin API key) |
+| Optimización de ruta | OSRM demo server (TSP /trip, sin API key) |
 | Automatización | GitHub Actions (ejecución paralela semanal) |
-| Tests | pytest |
+| Tests | pytest (43 tests unitarios con mocks) |
 
 ---
 

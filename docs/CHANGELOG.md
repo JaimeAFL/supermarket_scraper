@@ -4,6 +4,49 @@ Registro de todos los cambios realizados en Supermarket Price Tracker.
 
 ---
 
+## v4.0.0 — Listas de la compra, envíos y ruta óptima (2026-03-19)
+
+Versión mayor con tres nuevas funcionalidades: gestión de listas reutilizables, información de costes de envío por supermercado y cálculo de ruta óptima entre tiendas físicas.
+
+### Añadido
+
+#### Listas de la compra reutilizables (Paso 1)
+
+- **Tabla `listas`** en PostgreSQL: `nombre`, `etiqueta`, `notas`, `fecha_creacion`, `fecha_actualizacion`. Soporta 7 etiquetas predefinidas (Compra semanal, Compra mensual, Barbacoa, Cumpleaños, Bebé, Dieta, Otra).
+- **Tabla `lista_productos`** con FK a `listas` (CASCADE DELETE) y FK a `productos`. Restricción `UNIQUE(lista_id, producto_id)`.
+- **12 métodos nuevos en `DatabaseManager`**: `crear_lista`, `obtener_listas`, `obtener_lista_detalle`, `añadir_producto_a_lista`, `quitar_producto_de_lista`, `actualizar_cantidad_lista`, `eliminar_lista`, `renombrar_lista`, `duplicar_lista`, `cargar_lista_en_cesta`, `obtener_envios`, `obtener_envio_supermercado`.
+- **Página `5_Listas.py`**: UI completa para crear, ver, editar, duplicar y eliminar listas. Desglose por supermercado, buscador de productos, exportación a PDF y enlaces de email (Gmail, Outlook, Yahoo), carga directa en cesta.
+- **Botón "Añadir a lista"** en `2_Comparador.py` (junto a los botones de cesta/favoritos), `1_Historico_precios.py` (en el detalle de producto) y `app.py` (en los resultados de búsqueda rápida).
+
+#### Información de envíos (Paso 2)
+
+- **Tabla `envios`** con datos de los 7 supermercados: `coste_envio`, `umbral_gratis`, `pedido_minimo`, `notas`, `fecha_verificacion`. Datos iniciales con `ON CONFLICT DO NOTHING`.
+- **Desglose de envíos en `4_Cesta.py`**: para cada supermercado en la cesta, muestra el coste de envío, avisa si no se cumple el pedido mínimo, indica cuánto falta para envío gratis y calcula el coste total real (productos + envíos).
+
+#### Ruta óptima entre tiendas (Paso 3)
+
+- **`routing.py`** — Nuevo módulo con tres funciones:
+  - `geocodificar(direccion, pais)` — Nominatim (OpenStreetMap), sin API key. Respeta límite 1 req/seg.
+  - `buscar_supermercados_cercanos(lat, lon, supermercados, radio_metros)` — Overpass API, busca nodos y ways, devuelve solo la tienda más cercana por cadena.
+  - `calcular_ruta_optima(origen, paradas, modo)` — OSRM `/trip` con TSP. Devuelve paradas reordenadas, geometría GeoJSON, tramos y métricas.
+- **Sección "Ruta de compra" en `4_Cesta.py`**: input de dirección, selector de modo (coche/a pie/bici), slider de radio. Mapa Folium interactivo con marcador de casa, marcadores de tienda con color por supermercado y polilínea de ruta. Métricas de distancia, duración y número de tiendas. Caché en `st.session_state['ruta_cache']`.
+- **`folium>=0.15.0`** y **`streamlit-folium>=0.18.0`** añadidos a `requirements.txt`.
+
+#### Tests unitarios (Pasos 1.5, 2.4, 3.2)
+
+- **`tests/test_listas.py`** — 24 tests para todos los métodos de listas y envíos. Fixture `mock_db` con `psycopg2` mockeado, sin dependencia de PostgreSQL real.
+- **`tests/test_routing.py`** — 19 tests para `geocodificar`, `buscar_supermercados_cercanos`, `calcular_ruta_optima` y `_distancia_haversine`. Mocks de `requests.get` y `requests.post`.
+
+### Cambiado
+
+- **`database/init_db.py`**: añadidas tablas `listas`, `lista_productos`, `envios` con índices e inserts iniciales de datos de envío.
+- **`dashboard/utils/styles.py`**: color de Condis actualizado a `#C0392B` (dict Python y variable CSS).
+- **`dashboard/pages/4_Cesta.py`**: desglose por supermercado reescrito para mostrar envíos; añadida sección de ruta óptima con mapa Folium.
+- **`docs/arquitectura.md`**: modelo de datos actualizado con nuevas tablas; módulo `routing.py` documentado; estructura de archivos actualizada a 6 páginas.
+- **`README.md`**: descripción, roadmap, estructura de archivos y tabla de tecnologías actualizados a v4.0.0.
+
+---
+
 ## v3.0.0 — Migración a PostgreSQL y Aiden (2026-03-13)
 
 Migración completa de la capa de base de datos de SQLite a PostgreSQL alojado en Aiden.
