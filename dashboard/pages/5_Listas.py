@@ -311,20 +311,27 @@ else:
                                 value=p_cant,
                                 key=f"cant_{lista_id}_{prod_id}",
                                 label_visibility="collapsed")
-                            if nueva_cant != p_cant:
-                                db.actualizar_cantidad_lista(
-                                    lista_id, prod_id, nueva_cant)
-                                st.rerun()
 
                         with col_quitar:
-                            if st.button(
-                                "Quitar",
-                                key=f"quitar_{lista_id}_{prod_id}",
-                                use_container_width=True
-                            ):
-                                db.quitar_producto_de_lista(
-                                    lista_id, prod_id)
-                                st.rerun()
+                            if nueva_cant != p_cant:
+                                if st.button(
+                                    "✓",
+                                    key=f"ok_cant_{lista_id}_{prod_id}",
+                                    type="primary",
+                                    use_container_width=True
+                                ):
+                                    db.actualizar_cantidad_lista(
+                                        lista_id, prod_id, nueva_cant)
+                                    st.rerun()
+                            else:
+                                if st.button(
+                                    "Quitar",
+                                    key=f"quitar_{lista_id}_{prod_id}",
+                                    use_container_width=True
+                                ):
+                                    db.quitar_producto_de_lista(
+                                        lista_id, prod_id)
+                                    st.rerun()
 
                     # Desglose por supermercado
                     st.markdown("")
@@ -357,30 +364,41 @@ else:
                 st.markdown("")
                 encabezado("Añadir productos", "add_shopping_cart", nivel=3)
 
-                col_busq, col_super_filtro = st.columns([3, 1])
+                if '_supers_lista' not in st.session_state:
+                    _df_todos = db.obtener_productos_con_precio_actual()
+                    st.session_state['_supers_lista'] = (
+                        ['Todos'] + sorted(_df_todos['supermercado'].unique().tolist())
+                        if not _df_todos.empty else ['Todos'])
+
+                col_busq, col_super_filtro, col_btn_busq = st.columns([3, 1, 1])
                 with col_busq:
                     texto_busq = st.text_input(
                         "Buscar producto:",
                         placeholder="Ej: leche, arroz...",
                         key=f"busq_{lista_id}")
                 with col_super_filtro:
-                    df_todos = db.obtener_productos_con_precio_actual()
-                    supers_disp = (
-                        ['Todos'] +
-                        sorted(df_todos['supermercado'].unique().tolist())
-                        if not df_todos.empty else ['Todos'])
                     filtro_super_lista = st.selectbox(
-                        "Supermercado:", supers_disp,
+                        "Supermercado:",
+                        st.session_state['_supers_lista'],
                         key=f"super_{lista_id}")
+                with col_btn_busq:
+                    st.markdown('<div style="margin-top:28px"></div>',
+                                unsafe_allow_html=True)
+                    if st.button("Buscar", key=f"btn_busq_{lista_id}",
+                                 type="primary", use_container_width=True):
+                        super_param = (None if filtro_super_lista == 'Todos'
+                                       else filtro_super_lista)
+                        st.session_state[f'_res_lista_{lista_id}'] = (
+                            db.buscar_productos(
+                                nombre=texto_busq,
+                                supermercado=super_param,
+                                limite=80))
 
-                if texto_busq:
-                    super_param = (None if filtro_super_lista == 'Todos'
-                                   else filtro_super_lista)
-                    df_busq = db.buscar_productos(
-                        nombre=texto_busq,
-                        supermercado=super_param,
-                        limite=80)
+                if not texto_busq:
+                    st.session_state.pop(f'_res_lista_{lista_id}', None)
 
+                df_busq = st.session_state.get(f'_res_lista_{lista_id}')
+                if df_busq is not None:
                     if not df_busq.empty:
                         if 'prioridad' in df_busq.columns:
                             df_p1 = df_busq[df_busq['prioridad'] == 1]
@@ -417,6 +435,7 @@ else:
                                     opciones_busq[sel_prod],
                                     cant_add)
                                 if ok:
+                                    st.session_state.pop(f'_res_lista_{lista_id}', None)
                                     st.success("Producto añadido.")
                                     st.rerun()
                                 else:

@@ -271,46 +271,56 @@ def _tarjeta_cesta_html(item, indice):
 # ═══════════════════════════════════════════════════════════════════════
 encabezado("Añadir productos", "add_shopping_cart", nivel=3)
 
-col_busq, col_super, col_cant = st.columns([3, 1.5, 1])
+if '_supers_cesta' not in st.session_state:
+    _df_todos = db.obtener_productos_con_precio_actual()
+    st.session_state['_supers_cesta'] = (
+        ['Todos'] + sorted(_df_todos['supermercado'].unique().tolist())
+        if not _df_todos.empty else ['Todos'])
+
+col_busq, col_super, col_cant, col_btn_busq = st.columns([3, 1.5, 1, 1])
 with col_busq:
     busqueda_cesta = st.text_input(
         "Buscar producto:",
         placeholder="Ej: leche, arroz, aceite...",
         key="cesta_busq")
 with col_super:
-    df_todos = db.obtener_productos_con_precio_actual()
-    supers_list = (['Todos'] + sorted(
-        df_todos['supermercado'].unique().tolist())
-        if not df_todos.empty else ['Todos'])
     filtro_super = st.selectbox(
-        "Supermercado:", supers_list, key="cesta_super")
+        "Supermercado:",
+        st.session_state['_supers_cesta'],
+        key="cesta_super")
 with col_cant:
     cantidad_input = st.number_input(
         "Cantidad:", min_value=1, max_value=99,
         value=1, key="cesta_cant")
+with col_btn_busq:
+    st.markdown('<div style="margin-top:28px"></div>', unsafe_allow_html=True)
+    if st.button("Buscar", key="cesta_btn_busq",
+                 type="primary", use_container_width=True):
+        super_param = None if filtro_super == 'Todos' else filtro_super
+        with st.spinner("Buscando..."):
+            st.session_state['_cesta_res'] = db.buscar_productos(
+                nombre=busqueda_cesta,
+                supermercado=super_param,
+                limite=100)
 
-if busqueda_cesta:
-    super_param = None if filtro_super == 'Todos' else filtro_super
-    with st.spinner("Buscando..."):
-        df_res = db.buscar_productos(
-            nombre=busqueda_cesta,
-            supermercado=super_param,
-            limite=100)
+if not busqueda_cesta:
+    st.session_state.pop('_cesta_res', None)
 
-    if not df_res.empty:
-        # Filtrar solo prioridad 1 si existe
-        if 'prioridad' in df_res.columns:
-            df_prio = df_res[df_res['prioridad'] == 1]
-            if not df_prio.empty:
-                df_res = df_prio
+_df_res = st.session_state.get('_cesta_res')
+if _df_res is not None:
+    if not _df_res.empty:
+        if 'prioridad' in _df_res.columns:
+            _df_prio = _df_res[_df_res['prioridad'] == 1]
+            if not _df_prio.empty:
+                _df_res = _df_prio
 
         opciones = {
             (f"{row['nombre']} ({row['supermercado']}) - "
              f"{row.get('precio', '?')} €"): int(row['id'])
-            for _, row in df_res.iterrows()
+            for _, row in _df_res.iterrows()
         }
         sel_producto = st.selectbox(
-            f"Productos encontrados ({len(df_res)}):",
+            f"Productos encontrados ({len(_df_res)}):",
             list(opciones.keys()), key="cesta_sel")
 
         if st.button("Añadir a la cesta", key="cesta_btn_add",
@@ -318,6 +328,7 @@ if busqueda_cesta:
             ok = _añadir_a_cesta(db, opciones[sel_producto],
                                   cantidad_input)
             if ok:
+                st.session_state.pop('_cesta_res', None)
                 st.success("Producto añadido a la cesta.")
                 st.rerun()
     else:
