@@ -248,20 +248,9 @@ def _tarjeta_cesta_html(item, indice):
             'style="font-size:14px">check_circle</span>'
             'Mejor precio</span>')
 
-    url_imagen = item.get('url_imagen', '')
-    img_html = ""
-    if isinstance(url_imagen, str) and url_imagen.startswith('http'):
-        img_html = (
-            f'<img src="{url_imagen}" '
-            f'style="width:56px;height:56px;object-fit:contain;'
-            f'border-radius:8px;background:#F5F7FA;flex-shrink:0;margin-right:10px" '
-            f'onerror="this.onerror=null;this.removeAttribute(\'src\');this.style.background=\'#E0E4E8\'" alt="">'
-        )
-
     return (
         f'<div class="product-card" style="margin-bottom:6px">'
         f'<div class="product-super" style="background:{color}"></div>'
-        f'{img_html}'
         f'<div class="product-info">'
         f'<div class="product-name" title="{item["nombre"]}">'
         f'{item["nombre"]}</div>'
@@ -645,10 +634,19 @@ if cesta:
 
     # Renderizar cada producto con botones de acción
     for i, item in enumerate(cesta):
-        # Tarjeta visual
-        st.markdown(
-            _tarjeta_cesta_html(item, i),
-            unsafe_allow_html=True)
+        # Tarjeta visual (con imagen nativa si disponible)
+        _url_img = item.get('url_imagen', '')
+        _has_img = isinstance(_url_img, str) and _url_img.startswith('http')
+        if _has_img:
+            _ci, _cc = st.columns([1, 9])
+            with _ci:
+                try:
+                    st.image(_url_img, width=56)
+                except Exception:
+                    pass
+        else:
+            _cc = st
+        _cc.markdown(_tarjeta_cesta_html(item, i), unsafe_allow_html=True)
 
         # Botones de acción debajo de cada tarjeta
         cols_btn = st.columns([1, 1, 1, 3])

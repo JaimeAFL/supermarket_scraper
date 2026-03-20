@@ -267,40 +267,42 @@ else:
                         p_fmt     = prod.get('formato_normalizado', '')
                         p_img     = prod.get('url_imagen', '')
                         color     = COLORES_SUPERMERCADO.get(p_super, '#95A5A6')
+                        _has_img  = isinstance(p_img, str) and p_img.startswith('http')
 
-                        p_img_html = ""
-                        if isinstance(p_img, str) and p_img.startswith('http'):
-                            p_img_html = (
-                                f'<img src="{p_img}" '
-                                f'style="width:56px;height:56px;object-fit:contain;'
-                                f'border-radius:8px;background:#F5F7FA;flex-shrink:0;margin-right:10px" '
-                                f'onerror="this.onerror=null;this.removeAttribute(\'src\');this.style.background=\'#E0E4E8\'" alt="">'
-                            )
+                        _card_html = (
+                            f'<div class="product-card" '
+                            f'style="margin-bottom:4px;padding:10px 14px">'
+                            f'<div class="product-super" '
+                            f'style="background:{color}"></div>'
+                            f'<div class="product-info">'
+                            f'<div class="product-name">{p_nombre}</div>'
+                            f'<div class="product-meta">'
+                            f'{p_super}'
+                            f'{"  ·  " + p_fmt if p_fmt else ""}</div>'
+                            f'</div>'
+                            f'<div style="text-align:right">'
+                            f'<div class="product-price">'
+                            f'{p_precio:.2f} €</div>'
+                            f'<div class="product-unit-price">'
+                            f'x{p_cant}  =  '
+                            f'{p_precio * p_cant:.2f} €</div>'
+                            f'</div></div>'
+                        )
 
-                        col_card, col_cant_ed, col_quitar = st.columns(
-                            [5, 1, 1])
+                        if _has_img:
+                            col_img, col_card, col_cant_ed, col_quitar = st.columns(
+                                [1, 4, 1, 1])
+                            with col_img:
+                                try:
+                                    st.image(p_img, width=56)
+                                except Exception:
+                                    pass
+                        else:
+                            col_card, col_cant_ed, col_quitar = st.columns(
+                                [5, 1, 1])
 
                         with col_card:
-                            st.markdown(
-                                f'<div class="product-card" '
-                                f'style="margin-bottom:4px;padding:10px 14px">'
-                                f'<div class="product-super" '
-                                f'style="background:{color}"></div>'
-                                f'{p_img_html}'
-                                f'<div class="product-info">'
-                                f'<div class="product-name">{p_nombre}</div>'
-                                f'<div class="product-meta">'
-                                f'{p_super}'
-                                f'{"  ·  " + p_fmt if p_fmt else ""}</div>'
-                                f'</div>'
-                                f'<div style="text-align:right">'
-                                f'<div class="product-price">'
-                                f'{p_precio:.2f} €</div>'
-                                f'<div class="product-unit-price">'
-                                f'x{p_cant}  =  '
-                                f'{p_precio * p_cant:.2f} €</div>'
-                                f'</div></div>',
-                                unsafe_allow_html=True)
+                            st.markdown(_card_html, unsafe_allow_html=True)
 
                         with col_cant_ed:
                             nueva_cant = st.number_input(
