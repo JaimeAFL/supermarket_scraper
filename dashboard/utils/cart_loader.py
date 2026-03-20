@@ -33,14 +33,31 @@ _SEL_CARREFOUR = [
 ]
 
 _SEL_ALCAMPO = [
-    'button[data-testid="add-item"]',
+    # Ocado platform (compraonline.alcampo.es)
+    'button[data-test="add-button"]',
     'button[data-testid="add-to-order"]',
+    'button[data-testid="add-item"]',
+    '[data-test="add-button"]',
+    '[class*="AddButton"] button',
+    '[class*="addButton"] button',
     '[class*="AddToOrder"] button',
     '[class*="add-to-order"] button',
     'button[aria-label*="Añadir al carro"]',
+    'button[aria-label*="Add to trolley"]',
     'button[aria-label*="Añadir"]',
     'button:has-text("Añadir al carro")',
+    'button:has-text("Add to trolley")',
     'button:has-text("Añadir")',
+]
+
+# ── Selectores login/logout ────────────────────────────────────────────────────
+_SEL_ALCAMPO_LOGIN_BTN = [
+    'button:has-text("Iniciar sesión")',
+    'a:has-text("Iniciar sesión")',
+    'button:has-text("Login")',
+    'a:has-text("Login")',
+    '[data-test="login-button"]',
+    '[data-testid="login-button"]',
 ]
 
 # ── URLs de carrito ────────────────────────────────────────────────────────────
@@ -90,6 +107,42 @@ def _esperar_cierre(page):
             time.sleep(1)
     except Exception:
         pass
+
+
+def _esta_logueado_alcampo(page):
+    """Devuelve True si el usuario ya ha iniciado sesión en Alcampo."""
+    for sel in _SEL_ALCAMPO_LOGIN_BTN:
+        try:
+            if page.locator(sel).first.is_visible(timeout=1500):
+                return False  # El botón de login es visible → no logueado
+        except Exception:
+            continue
+    return True  # No se encontró el botón de login → logueado
+
+
+def _esperar_login_alcampo(page, timeout_seg=240):
+    """Espera a que el usuario inicie sesión. Devuelve True si lo detecta."""
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info("  INICIA SESIÓN en el navegador que se ha abierto.")
+    logger.info("  El carrito se cargará automáticamente al detectar")
+    logger.info("  que has iniciado sesión (máx. %d min)." % (timeout_seg // 60))
+    logger.info("=" * 60)
+
+    elapsed = 0
+    while elapsed < timeout_seg:
+        try:
+            if _esta_logueado_alcampo(page):
+                logger.info("  Login detectado. Cargando productos...")
+                page.wait_for_timeout(2000)
+                return True
+        except Exception:
+            pass
+        time.sleep(2)
+        elapsed += 2
+
+    logger.warning("  Tiempo de espera agotado. Intentando continuar...")
+    return False
 
 
 def cargar_carrefour(productos):
@@ -234,6 +287,10 @@ def cargar_alcampo(productos):
             page.wait_for_timeout(2000)
         except Exception as e:
             logger.warning(f"  Aviso en visita inicial: {e}")
+
+        # Esperar login si es necesario
+        if not _esta_logueado_alcampo(page):
+            _esperar_login_alcampo(page)
 
         ok = 0
         fallo = 0

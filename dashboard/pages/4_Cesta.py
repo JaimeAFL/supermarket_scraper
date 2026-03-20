@@ -819,11 +819,19 @@ if cesta:
                                  "--archivo", _tmp.name],
                                 cwd=_PROJECT_ROOT,
                             )
+                            _needs_login = _clave == "alcampo"
                             st.info(
-                                f"Cargando productos en tu carrito de "
-                                f"{_nombre_super}. El navegador se abrirá "
-                                f"automáticamente con el carrito listo para "
-                                f"que puedas completar el pedido."
+                                f"Se ha abierto el navegador con "
+                                f"{_nombre_super}. "
+                                + (
+                                    "**Inicia sesión** en el navegador si no "
+                                    "lo estás — el carrito se cargará "
+                                    "automáticamente al detectarlo. "
+                                    if _needs_login else ""
+                                )
+                                + "Cuando estén todos los productos, el "
+                                "navegador te llevará al carrito para "
+                                "completar el pedido."
                             )
                         except Exception as _e:
                             st.error(f"Error al lanzar el navegador: {_e}")
