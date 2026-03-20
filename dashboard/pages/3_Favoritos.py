@@ -309,14 +309,24 @@ if not df_favs.empty:
                 badges = [(_texto_estado(row['estado']), tipo)]
                 if row['variacion'] != 0:
                     badges.append((f"{row['variacion']:+.2f} €", tipo))
-                st.markdown(
+                _url_img = row.get('url_imagen', '')
+                _has_img = isinstance(_url_img, str) and _url_img.startswith('http')
+                if _has_img:
+                    _ci, _cc = st.columns([1, 9])
+                    with _ci:
+                        try:
+                            st.image(_url_img, width=60)
+                        except Exception:
+                            pass
+                else:
+                    _cc = st
+                _cc.markdown(
                     tarjeta_producto_html(
                         nombre=row['nombre'],
                         supermercado=row['supermercado'],
                         precio=row['precio_actual'],
                         formato=row.get('formato_normalizado', ''),
-                        badges_extra=badges,
-                        url_imagen=row.get('url_imagen')),
+                        badges_extra=badges),
                     unsafe_allow_html=True)
             st.markdown("---")
 
@@ -347,14 +357,24 @@ if not df_favs.empty:
                 badges.append((f"{row['variacion']:+.2f} €", tipo))
             if row.get('marca'):
                 badges.append((row['marca'], 'neutral'))
-            st.markdown(
+            _url_img = row.get('url_imagen', '')
+            _has_img = isinstance(_url_img, str) and _url_img.startswith('http')
+            if _has_img:
+                _ci, _cc = st.columns([1, 9])
+                with _ci:
+                    try:
+                        st.image(_url_img, width=60)
+                    except Exception:
+                        pass
+            else:
+                _cc = st
+            _cc.markdown(
                 tarjeta_producto_html(
                     nombre=row['nombre'],
                     supermercado=row['supermercado'],
                     precio=row['precio_actual'],
                     formato=row.get('formato_normalizado', ''),
-                    badges_extra=badges,
-                    url_imagen=row.get('url_imagen')),
+                    badges_extra=badges),
                 unsafe_allow_html=True)
     else:
         estado_vacio(
