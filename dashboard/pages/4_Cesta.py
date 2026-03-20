@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Página: Calculadora de cesta de la compra."""
 
-import sys, os
+import sys, os, json, tempfile, subprocess
 
 _PROJECT_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
@@ -735,6 +735,98 @@ if cesta:
         ):
             st.session_state['cesta'] = []
             st.rerun()
+
+    # ═══════════════════════════════════════════════════════════════
+    # CARGAR EN CARRITO ONLINE (Carrefour / Alcampo)
+    # ═══════════════════════════════════════════════════════════════
+    st.markdown("---")
+    encabezado("Cargar en carrito online", "shopping_cart_checkout", nivel=3)
+    st.caption(
+        "Abre un navegador, añade automáticamente tus productos al carrito "
+        "del supermercado y te deja en la pantalla de pago para que completes "
+        "el pedido con tus datos."
+    )
+
+    _SUPERMERCADOS_CARRITO = {
+        "Carrefour": ("carrefour", "🔵"),
+        "Alcampo":   ("alcampo",   "🟠"),
+    }
+
+    _cols_carrito = st.columns(len(_SUPERMERCADOS_CARRITO))
+
+    for _col, (_nombre_super, (_clave, _emoji)) in zip(
+        _cols_carrito, _SUPERMERCADOS_CARRITO.items()
+    ):
+        with _col:
+            _items_super = [
+                i for i in cesta
+                if i.get("supermercado", "").lower() == _nombre_super.lower()
+            ]
+            _n = len(_items_super)
+            _total_super = sum(
+                i["precio"] * i["cantidad"] for i in _items_super
+            )
+
+            if _n == 0:
+                st.button(
+                    f"{_emoji} {_nombre_super}\n(sin productos)",
+                    key=f"carrito_btn_{_clave}",
+                    disabled=True,
+                    use_container_width=True,
+                )
+            else:
+                _label = (
+                    f"{_emoji} Cargar en {_nombre_super}\n"
+                    f"{_n} producto{'s' if _n > 1 else ''} · {_total_super:.2f} €"
+                )
+                if st.button(
+                    _label,
+                    key=f"carrito_btn_{_clave}",
+                    use_container_width=True,
+                    type="primary",
+                ):
+                    # Recopilar datos de cada producto (URL + id_externo desde BD)
+                    _productos_cargar = []
+                    for _item in _items_super:
+                        _prod_db = db.obtener_producto_por_id(_item["producto_id"])
+                        if _prod_db:
+                            _productos_cargar.append({
+                                "nombre":     _item["nombre"],
+                                "cantidad":   _item["cantidad"],
+                                "url":        _prod_db.get("url", ""),
+                                "id_externo": _prod_db.get("id_externo", ""),
+                            })
+
+                    if not _productos_cargar:
+                        st.error("No se encontraron URLs para los productos.")
+                    else:
+                        # Escribir JSON temporal y lanzar subprocess
+                        try:
+                            _tmp = tempfile.NamedTemporaryFile(
+                                mode="w", suffix=".json",
+                                delete=False, encoding="utf-8"
+                            )
+                            json.dump(_productos_cargar, _tmp, ensure_ascii=False)
+                            _tmp.close()
+
+                            _script = os.path.join(
+                                _PROJECT_ROOT,
+                                "dashboard", "utils", "cart_loader.py"
+                            )
+                            subprocess.Popen(
+                                [sys.executable, _script,
+                                 "--supermercado", _clave,
+                                 "--archivo", _tmp.name],
+                                cwd=_PROJECT_ROOT,
+                            )
+                            st.success(
+                                f"Abriendo navegador con tu carrito de "
+                                f"{_nombre_super}. Cuando se carguen todos "
+                                f"los productos, completa el pedido con tus "
+                                f"datos directamente en la web."
+                            )
+                        except Exception as _e:
+                            st.error(f"Error al lanzar el navegador: {_e}")
 
     # ═══════════════════════════════════════════════════════════════
     # GUARDAR TU CESTA (PDF + email web)
