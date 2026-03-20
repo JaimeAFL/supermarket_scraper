@@ -265,7 +265,17 @@ else:
                         p_precio  = float(prod.get('precio', 0) or 0)
                         p_cant    = int(prod.get('cantidad', 1))
                         p_fmt     = prod.get('formato_normalizado', '')
+                        p_img     = prod.get('url_imagen', '')
                         color     = COLORES_SUPERMERCADO.get(p_super, '#95A5A6')
+
+                        p_img_html = ""
+                        if p_img:
+                            p_img_html = (
+                                f'<img src="{p_img}" '
+                                f'style="width:56px;height:56px;object-fit:contain;'
+                                f'border-radius:8px;background:#F5F7FA;flex-shrink:0;margin-right:10px" '
+                                f'onerror="this.style.display=\'none\'" alt="">'
+                            )
 
                         col_card, col_cant_ed, col_quitar = st.columns(
                             [5, 1, 1])
@@ -276,6 +286,7 @@ else:
                                 f'style="margin-bottom:4px;padding:10px 14px">'
                                 f'<div class="product-super" '
                                 f'style="background:{color}"></div>'
+                                f'{p_img_html}'
                                 f'<div class="product-info">'
                                 f'<div class="product-name">{p_nombre}</div>'
                                 f'<div class="product-meta">'

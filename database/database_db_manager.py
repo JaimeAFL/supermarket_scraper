@@ -544,6 +544,7 @@ class DatabaseManager:
                 SELECT p.id, p.nombre, p.supermercado, p.formato,
                        p.formato_normalizado,
                        p.tipo_producto, p.marca, p.categoria_normalizada,
+                       p.url_imagen,
                        pr.precio, f.fecha_agregado
                 FROM favoritos f
                 JOIN productos p ON p.id=f.producto_id
@@ -567,6 +568,7 @@ class DatabaseManager:
                 SELECT p.id, p.nombre, p.supermercado, p.marca,
                        p.categoria_normalizada, p.formato_normalizado,
                        p.tipo_producto, p.nombre_normalizado,
+                       p.url_imagen,
                        (SELECT precio FROM precios WHERE producto_id=p.id
                         ORDER BY fecha_captura DESC LIMIT 1) AS precio
                 FROM productos p
@@ -680,7 +682,7 @@ class DatabaseManager:
                    lp.cantidad, lp.notas AS notas_producto,
                    p.id AS producto_id, p.nombre, p.supermercado,
                    p.marca, p.formato_normalizado, p.categoria_normalizada,
-                   p.url,
+                   p.url, p.url_imagen,
                    (SELECT precio FROM precios
                     WHERE producto_id = p.id
                     ORDER BY fecha_captura DESC LIMIT 1
@@ -827,6 +829,7 @@ class DatabaseManager:
                 'precio': float(row.get('precio', 0)) if row.get('precio') else 0,
                 'formato_normalizado': row.get('formato_normalizado', ''),
                 'marca': row.get('marca', ''),
+                'url_imagen': row.get('url_imagen', ''),
                 'cantidad': int(row.get('cantidad', 1)),
                 'alternativa_id': None,
                 'alternativa_nombre': None,

@@ -98,6 +98,7 @@ def _añadir_a_cesta(db, producto_id, cantidad):
         'precio': float(prod.get('precio', 0)),
         'formato_normalizado': prod.get('formato_normalizado', ''),
         'marca': prod.get('marca', ''),
+        'url_imagen': prod.get('url_imagen', ''),
         'cantidad': cantidad,
         'alternativa_id': int(alt['id']) if alt else None,
         'alternativa_nombre': alt.get('nombre') if alt else None,
@@ -243,9 +244,20 @@ def _tarjeta_cesta_html(item, indice):
             'style="font-size:14px">check_circle</span>'
             'Mejor precio</span>')
 
+    url_imagen = item.get('url_imagen', '')
+    img_html = ""
+    if url_imagen:
+        img_html = (
+            f'<img src="{url_imagen}" '
+            f'style="width:56px;height:56px;object-fit:contain;'
+            f'border-radius:8px;background:#F5F7FA;flex-shrink:0;margin-right:10px" '
+            f'onerror="this.style.display=\'none\'" alt="">'
+        )
+
     return (
         f'<div class="product-card" style="margin-bottom:6px">'
         f'<div class="product-super" style="background:{color}"></div>'
+        f'{img_html}'
         f'<div class="product-info">'
         f'<div class="product-name" title="{item["nombre"]}">'
         f'{item["nombre"]}</div>'
@@ -323,7 +335,7 @@ if busqueda_cesta:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# SECCIÓN B: TU CESTA
+# SECCIÓN B: CONTENIDO DE LA CESTA
 # ═══════════════════════════════════════════════════════════════════════
 st.markdown("---")
 cesta = st.session_state['cesta']
@@ -331,61 +343,9 @@ cesta = st.session_state['cesta']
 if cesta:
     totales = _calcular_totales(cesta)
 
-    encabezado(
-        f"Tu cesta ({totales['n_productos']} productos "
-        f"· {totales['total']:.2f} €)",
-        "shopping_bag", nivel=3)
-
-    # Renderizar cada producto con botones de acción
-    for i, item in enumerate(cesta):
-        # Tarjeta visual
-        st.markdown(
-            _tarjeta_cesta_html(item, i),
-            unsafe_allow_html=True)
-
-        # Botones de acción debajo de cada tarjeta
-        cols_btn = st.columns([1, 1, 1, 3])
-
-        with cols_btn[0]:
-            if st.button("Quitar", key=f"cesta_quitar_{i}",
-                          use_container_width=True):
-                _quitar_de_cesta(i)
-                st.rerun()
-
-        with cols_btn[1]:
-            # Botón de intercambiar o deshacer
-            alt_precio = item.get('alternativa_precio')
-            tiene_alt = (alt_precio is not None
-                         and alt_precio < item['precio'])
-            fue_intercambiado = item.get('original_id') is not None
-
-            if fue_intercambiado:
-                if st.button("Deshacer", key=f"cesta_deshacer_{i}",
-                              use_container_width=True):
-                    _deshacer_intercambio(db, i)
-                    st.rerun()
-            elif tiene_alt:
-                if st.button("Intercambiar",
-                              key=f"cesta_intercambiar_{i}",
-                              use_container_width=True):
-                    _intercambiar_producto(db, i)
-                    st.rerun()
-
-        with cols_btn[2]:
-            # Ajustar cantidad
-            nueva_cant = st.number_input(
-                "Cant.", min_value=1, max_value=99,
-                value=item['cantidad'],
-                key=f"cesta_cant_{i}",
-                label_visibility="collapsed")
-            if nueva_cant != item['cantidad']:
-                st.session_state['cesta'][i]['cantidad'] = nueva_cant
-                st.rerun()
-
     # ═══════════════════════════════════════════════════════════════
-    # SECCIÓN C: RESUMEN Y TOTALES
+    # RESUMEN
     # ═══════════════════════════════════════════════════════════════
-    st.markdown("---")
     encabezado("Resumen", "receipt_long", nivel=3)
 
     fila_metricas([
@@ -395,7 +355,9 @@ if cesta:
         ("price_check", f"{totales['optimizado']:.2f} €", "Optimizado"),
     ])
 
-    # Desglose por supermercado (con envíos)
+    # ═══════════════════════════════════════════════════════════════
+    # DESGLOSE POR SUPERMERCADO
+    # ═══════════════════════════════════════════════════════════════
     st.markdown("")
     encabezado("Desglose por supermercado", "storefront", nivel=3)
 
@@ -470,137 +432,8 @@ if cesta:
             "Los costes de envío son orientativos y pueden variar según "
             "zona, promociones o condiciones del momento.")
 
-    # Botones de acción global
-    st.markdown("")
-    col_opt, col_clear = st.columns(2)
-
-    with col_opt:
-        n_intercambiables = sum(
-            1 for i in cesta
-            if i.get('alternativa_precio') is not None
-            and i['alternativa_precio'] < i['precio']
-            and not i.get('original_id')
-        )
-        if n_intercambiables > 0:
-            if st.button(
-                f"Optimizar toda la cesta "
-                f"({n_intercambiables} cambios)",
-                key="cesta_optimizar",
-                type="primary",
-                use_container_width=True
-            ):
-                _optimizar_toda_la_cesta(db)
-                st.success("Cesta optimizada.")
-                st.rerun()
-        else:
-            st.button(
-                "Tu cesta ya está optimizada",
-                disabled=True,
-                use_container_width=True,
-                key="cesta_optimizada_disabled")
-
-    with col_clear:
-        if st.button(
-            "Limpiar cesta",
-            key="cesta_limpiar",
-            use_container_width=True
-        ):
-            st.session_state['cesta'] = []
-            st.rerun()
-
     # ═══════════════════════════════════════════════════════════════
-    # SECCIÓN D: GUARDAR TU CESTA (PDF + email web)
-    # ═══════════════════════════════════════════════════════════════
-    st.markdown("---")
-    encabezado("Guardar tu cesta", "save", nivel=3)
-
-    # PDF
-    nombre_pdf = f"lista_compra_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
-    try:
-        pdf_bytes = generar_pdf_cesta(cesta)
-        st.download_button(
-            label="Descargar lista de la compra (PDF)",
-            data=pdf_bytes,
-            file_name=nombre_pdf,
-            mime="application/pdf",
-            key="cesta_pdf_download",
-            use_container_width=True,
-        )
-    except Exception as e:
-        st.error(f"Error al generar PDF: {e}")
-
-    # Email web — botones con logo del servicio
-    st.caption("Enviar por email (abre redacción en webmail):")
-    st.info("Los proveedores web (Gmail/Outlook/Yahoo) no permiten adjuntar "
-    "un PDF automáticamente desde un enlace por seguridad.\n\n"
-    "Paso recomendado:\n"
-    "1) Descarga la lista de la compra\n"
-    "2) Adjunta el PDF manualmente al abrir el correo."
-    )
-
-    enlaces = generar_enlaces_email(cesta)
-
-    # Logos de proveedores de correo (favicons por dominio, estables)
-    # Evitamos depender de slugs/versiones de catálogos de iconos externos que
-    # pueden cambiar y devolver 404 para algunas marcas.
-    _LOGO_GMAIL = "https://www.google.com/s2/favicons?domain=gmail.com&sz=64"
-    _LOGO_OUTLOOK = "https://www.google.com/s2/favicons?domain=outlook.live.com&sz=64"
-    _LOGO_YAHOO = "https://www.google.com/s2/favicons?domain=mail.yahoo.com&sz=64"
-
-    _btn_base = (
-        "display:flex;flex-direction:column;align-items:center;"
-        "justify-content:center;gap:8px;width:100%;"
-        "padding:14px 12px;border:1px solid #E0E4E8;"
-        "border-radius:12px;background:#FFFFFF;"
-        "text-decoration:none;cursor:pointer;"
-        "transition:all 0.2s ease;"
-        "box-shadow:0 1px 3px rgba(0,0,0,0.04)"
-    )
-    _btn_hover = "this.style.background='#F5F7FA';this.style.boxShadow='0 2px 8px rgba(0,0,0,0.08)';this.style.borderColor='#C4CDD5'"
-    _btn_out = "this.style.background='#FFFFFF';this.style.boxShadow='0 1px 3px rgba(0,0,0,0.04)';this.style.borderColor='#E0E4E8'"
-    _icon_circle_style = (
-        "width:52px;height:52px;border-radius:999px;"
-        "display:flex;align-items:center;justify-content:center;"
-        "background:#FFFFFF;border:1px solid #E5E7EB;"
-        "box-shadow:0 2px 6px rgba(0,0,0,0.08);overflow:hidden"
-    )
-    _icon_img_style = "width:32px;height:32px;object-fit:contain;border-radius:999px"
-    _label_style = "font-size:11px;font-weight:500;color:#6B7280;font-family:Inter,sans-serif"
-
-    col_gm, col_ol, col_yh = st.columns(3)
-
-    with col_gm:
-        st.markdown(
-            f'<a href="{enlaces["gmail"]}" target="_blank" rel="noopener noreferrer" '
-            f'style="{_btn_base}" title="Enviar con Gmail"'
-            f' onmouseover="{_btn_hover}"'
-            f' onmouseout="{_btn_out}">'
-            f'<span style="{_icon_circle_style}"><img src="{_LOGO_GMAIL}" style="{_icon_img_style}" alt="Gmail"></span>'
-            f'<span style="{_label_style}">Gmail</span></a>',
-            unsafe_allow_html=True)
-
-    with col_ol:
-        st.markdown(
-            f'<a href="{enlaces["outlook"]}" target="_blank" rel="noopener noreferrer" '
-            f'style="{_btn_base}" title="Enviar con Outlook"'
-            f' onmouseover="{_btn_hover}"'
-            f' onmouseout="{_btn_out}">'
-            f'<span style="{_icon_circle_style}"><img src="{_LOGO_OUTLOOK}" style="{_icon_img_style}" alt="Outlook"></span>'
-            f'<span style="{_label_style}">Outlook</span></a>',
-            unsafe_allow_html=True)
-
-    with col_yh:
-        st.markdown(
-            f'<a href="{enlaces["yahoo"]}" target="_blank" rel="noopener noreferrer" '
-            f'style="{_btn_base}" title="Enviar con Yahoo"'
-            f' onmouseover="{_btn_hover}"'
-            f' onmouseout="{_btn_out}">'
-            f'<span style="{_icon_circle_style}"><img src="{_LOGO_YAHOO}" style="{_icon_img_style}" alt="Yahoo"></span>'
-            f'<span style="{_label_style}">Yahoo</span></a>',
-            unsafe_allow_html=True)
-
-    # ═══════════════════════════════════════════════════════════════
-    # SECCIÓN E: RUTA DE COMPRA
+    # RUTA DE COMPRA
     # ═══════════════════════════════════════════════════════════════
     st.markdown("---")
     encabezado("Ruta de compra", "route", nivel=3)
@@ -765,7 +598,10 @@ if cesta:
                  "Tiendas"),
             ])
 
-            # Orden de paradas
+            # ═══════════════════════════════════════════════════════
+            # ORDEN DE PARADAS
+            # ═══════════════════════════════════════════════════════
+            st.markdown("---")
             encabezado("Orden de paradas", "format_list_numbered",
                        nivel=3)
             for idx, parada in enumerate(
@@ -793,6 +629,188 @@ if cesta:
                 "wrong_location",
                 "No se encontraron tiendas cercanas",
                 "Prueba aumentando el radio de búsqueda.")
+
+    # ═══════════════════════════════════════════════════════════════
+    # TU CESTA
+    # ═══════════════════════════════════════════════════════════════
+    st.markdown("---")
+    encabezado(
+        f"Tu cesta ({totales['n_productos']} productos "
+        f"· {totales['total']:.2f} €)",
+        "shopping_bag", nivel=3)
+
+    # Renderizar cada producto con botones de acción
+    for i, item in enumerate(cesta):
+        # Tarjeta visual
+        st.markdown(
+            _tarjeta_cesta_html(item, i),
+            unsafe_allow_html=True)
+
+        # Botones de acción debajo de cada tarjeta
+        cols_btn = st.columns([1, 1, 1, 3])
+
+        with cols_btn[0]:
+            if st.button("Quitar", key=f"cesta_quitar_{i}",
+                          use_container_width=True):
+                _quitar_de_cesta(i)
+                st.rerun()
+
+        with cols_btn[1]:
+            # Botón de intercambiar o deshacer
+            alt_precio = item.get('alternativa_precio')
+            tiene_alt = (alt_precio is not None
+                         and alt_precio < item['precio'])
+            fue_intercambiado = item.get('original_id') is not None
+
+            if fue_intercambiado:
+                if st.button("Deshacer", key=f"cesta_deshacer_{i}",
+                              use_container_width=True):
+                    _deshacer_intercambio(db, i)
+                    st.rerun()
+            elif tiene_alt:
+                if st.button("Intercambiar",
+                              key=f"cesta_intercambiar_{i}",
+                              use_container_width=True):
+                    _intercambiar_producto(db, i)
+                    st.rerun()
+
+        with cols_btn[2]:
+            # Ajustar cantidad
+            nueva_cant = st.number_input(
+                "Cant.", min_value=1, max_value=99,
+                value=item['cantidad'],
+                key=f"cesta_cant_{i}",
+                label_visibility="collapsed")
+            if nueva_cant != item['cantidad']:
+                st.session_state['cesta'][i]['cantidad'] = nueva_cant
+                st.rerun()
+
+    # Botones de acción global
+    st.markdown("")
+    col_opt, col_clear = st.columns(2)
+
+    with col_opt:
+        n_intercambiables = sum(
+            1 for i in cesta
+            if i.get('alternativa_precio') is not None
+            and i['alternativa_precio'] < i['precio']
+            and not i.get('original_id')
+        )
+        if n_intercambiables > 0:
+            if st.button(
+                f"Optimizar toda la cesta "
+                f"({n_intercambiables} cambios)",
+                key="cesta_optimizar",
+                type="primary",
+                use_container_width=True
+            ):
+                _optimizar_toda_la_cesta(db)
+                st.success("Cesta optimizada.")
+                st.rerun()
+        else:
+            st.button(
+                "Tu cesta ya está optimizada",
+                disabled=True,
+                use_container_width=True,
+                key="cesta_optimizada_disabled")
+
+    with col_clear:
+        if st.button(
+            "Limpiar cesta",
+            key="cesta_limpiar",
+            use_container_width=True
+        ):
+            st.session_state['cesta'] = []
+            st.rerun()
+
+    # ═══════════════════════════════════════════════════════════════
+    # GUARDAR TU CESTA (PDF + email web)
+    # ═══════════════════════════════════════════════════════════════
+    st.markdown("---")
+    encabezado("Guardar tu cesta", "save", nivel=3)
+
+    # PDF
+    nombre_pdf = f"lista_compra_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+    try:
+        pdf_bytes = generar_pdf_cesta(cesta)
+        st.download_button(
+            label="Descargar lista de la compra (PDF)",
+            data=pdf_bytes,
+            file_name=nombre_pdf,
+            mime="application/pdf",
+            key="cesta_pdf_download",
+            use_container_width=True,
+        )
+    except Exception as e:
+        st.error(f"Error al generar PDF: {e}")
+
+    # Email web — botones con logo del servicio
+    st.caption("Enviar por email (abre redacción en webmail):")
+    st.info("Los proveedores web (Gmail/Outlook/Yahoo) no permiten adjuntar "
+    "un PDF automáticamente desde un enlace por seguridad.\n\n"
+    "Paso recomendado:\n"
+    "1) Descarga la lista de la compra\n"
+    "2) Adjunta el PDF manualmente al abrir el correo."
+    )
+
+    enlaces = generar_enlaces_email(cesta)
+
+    # Logos de proveedores de correo (favicons por dominio, estables)
+    _LOGO_GMAIL = "https://www.google.com/s2/favicons?domain=gmail.com&sz=64"
+    _LOGO_OUTLOOK = "https://www.google.com/s2/favicons?domain=outlook.live.com&sz=64"
+    _LOGO_YAHOO = "https://www.google.com/s2/favicons?domain=mail.yahoo.com&sz=64"
+
+    _btn_base = (
+        "display:flex;flex-direction:column;align-items:center;"
+        "justify-content:center;gap:8px;width:100%;"
+        "padding:14px 12px;border:1px solid #E0E4E8;"
+        "border-radius:12px;background:#FFFFFF;"
+        "text-decoration:none;cursor:pointer;"
+        "transition:all 0.2s ease;"
+        "box-shadow:0 1px 3px rgba(0,0,0,0.04)"
+    )
+    _btn_hover = "this.style.background='#F5F7FA';this.style.boxShadow='0 2px 8px rgba(0,0,0,0.08)';this.style.borderColor='#C4CDD5'"
+    _btn_out = "this.style.background='#FFFFFF';this.style.boxShadow='0 1px 3px rgba(0,0,0,0.04)';this.style.borderColor='#E0E4E8'"
+    _icon_circle_style = (
+        "width:52px;height:52px;border-radius:999px;"
+        "display:flex;align-items:center;justify-content:center;"
+        "background:#FFFFFF;border:1px solid #E5E7EB;"
+        "box-shadow:0 2px 6px rgba(0,0,0,0.08);overflow:hidden"
+    )
+    _icon_img_style = "width:32px;height:32px;object-fit:contain;border-radius:999px"
+    _label_style = "font-size:11px;font-weight:500;color:#6B7280;font-family:Inter,sans-serif"
+
+    col_gm, col_ol, col_yh = st.columns(3)
+
+    with col_gm:
+        st.markdown(
+            f'<a href="{enlaces["gmail"]}" target="_blank" rel="noopener noreferrer" '
+            f'style="{_btn_base}" title="Enviar con Gmail"'
+            f' onmouseover="{_btn_hover}"'
+            f' onmouseout="{_btn_out}">'
+            f'<span style="{_icon_circle_style}"><img src="{_LOGO_GMAIL}" style="{_icon_img_style}" alt="Gmail"></span>'
+            f'<span style="{_label_style}">Gmail</span></a>',
+            unsafe_allow_html=True)
+
+    with col_ol:
+        st.markdown(
+            f'<a href="{enlaces["outlook"]}" target="_blank" rel="noopener noreferrer" '
+            f'style="{_btn_base}" title="Enviar con Outlook"'
+            f' onmouseover="{_btn_hover}"'
+            f' onmouseout="{_btn_out}">'
+            f'<span style="{_icon_circle_style}"><img src="{_LOGO_OUTLOOK}" style="{_icon_img_style}" alt="Outlook"></span>'
+            f'<span style="{_label_style}">Outlook</span></a>',
+            unsafe_allow_html=True)
+
+    with col_yh:
+        st.markdown(
+            f'<a href="{enlaces["yahoo"]}" target="_blank" rel="noopener noreferrer" '
+            f'style="{_btn_base}" title="Enviar con Yahoo"'
+            f' onmouseover="{_btn_hover}"'
+            f' onmouseout="{_btn_out}">'
+            f'<span style="{_icon_circle_style}"><img src="{_LOGO_YAHOO}" style="{_icon_img_style}" alt="Yahoo"></span>'
+            f'<span style="{_label_style}">Yahoo</span></a>',
+            unsafe_allow_html=True)
 
 else:
     # Cesta vacía

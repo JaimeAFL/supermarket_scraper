@@ -314,7 +314,8 @@ if not df_favs.empty:
                         supermercado=row['supermercado'],
                         precio=row['precio_actual'],
                         formato=row.get('formato_normalizado', ''),
-                        badges_extra=badges),
+                        badges_extra=badges,
+                        url_imagen=row.get('url_imagen')),
                     unsafe_allow_html=True)
             st.markdown("---")
 
@@ -351,7 +352,8 @@ if not df_favs.empty:
                     supermercado=row['supermercado'],
                     precio=row['precio_actual'],
                     formato=row.get('formato_normalizado', ''),
-                    badges_extra=badges),
+                    badges_extra=badges,
+                    url_imagen=row.get('url_imagen')),
                 unsafe_allow_html=True)
     else:
         estado_vacio(

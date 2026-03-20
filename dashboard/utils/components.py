@@ -316,7 +316,7 @@ def aplicar_orden(df, orden, col_precio='precio'):
 
 def tarjeta_producto_html(nombre, supermercado, precio, formato="",
                           precio_unitario=None, unidad_precio="",
-                          badges_extra=None):
+                          badges_extra=None, url_imagen=None):
     """Genera HTML de una tarjeta de producto."""
     color_super = COLORES_SUPERMERCADO.get(supermercado, '#95A5A6')
     precio_str = (f"{precio:.2f} €"
@@ -341,9 +341,19 @@ def tarjeta_producto_html(nombre, supermercado, precio, formato="",
         )
         badges_html = f'<div style="margin-top:4px">{badges_html}</div>'
 
+    img_html = ""
+    if url_imagen:
+        img_html = (
+            f'<img src="{url_imagen}" '
+            f'style="width:56px;height:56px;object-fit:contain;'
+            f'border-radius:8px;background:#F5F7FA;flex-shrink:0;margin-right:10px" '
+            f'onerror="this.style.display=\'none\'" alt="">'
+        )
+
     return (
         f'<div class="product-card">'
         f'<div class="product-super" style="background:{color_super}"></div>'
+        f'{img_html}'
         f'<div class="product-info">'
         f'<div class="product-name" title="{nombre}">{nombre}</div>'
         f'<div class="product-meta">{" · ".join(meta_parts)}</div>'
