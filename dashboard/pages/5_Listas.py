@@ -293,10 +293,10 @@ else:
                             col_img, col_card, col_cant_ed, col_quitar = st.columns(
                                 [1, 4, 1, 1])
                             with col_img:
-                                try:
-                                    st.image(p_img, width=56)
-                                except Exception:
-                                    pass
+                                st.markdown(
+                                    f'<img src="{p_img}" width="56" '
+                                    f'style="border-radius:4px;object-fit:contain">',
+                                    unsafe_allow_html=True)
                         else:
                             col_card, col_cant_ed, col_quitar = st.columns(
                                 [5, 1, 1])

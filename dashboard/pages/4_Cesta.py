@@ -651,10 +651,10 @@ if cesta:
         if _has_img:
             _ci, _cc = st.columns([1, 9])
             with _ci:
-                try:
-                    st.image(_url_img, width=56)
-                except Exception:
-                    pass
+                st.markdown(
+                    f'<img src="{_url_img}" width="56" '
+                    f'style="border-radius:4px;object-fit:contain">',
+                    unsafe_allow_html=True)
         else:
             _cc = st
         _cc.markdown(_tarjeta_cesta_html(item, i), unsafe_allow_html=True)
