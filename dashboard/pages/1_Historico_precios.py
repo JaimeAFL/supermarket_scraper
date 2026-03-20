@@ -124,7 +124,7 @@ if filtros['busqueda']:
                         key="hist_lista_sel",
                         label_visibility="collapsed")
                 with col_lb:
-                    if st.button("+ Lista", key="hist_lista_btn",
+                    if st.button("Añadir a lista", key="hist_lista_btn",
                                   use_container_width=True):
                         ok = db.añadir_producto_a_lista(
                             opciones_listas_hist[lista_hist_sel], producto_id)
