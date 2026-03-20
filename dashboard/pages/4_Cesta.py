@@ -134,12 +134,15 @@ def _intercambiar_producto(db, indice):
     item['original_nombre'] = item['nombre']
     item['original_super'] = item['supermercado']
     item['original_precio'] = item['precio']
+    item['original_url_imagen'] = item.get('url_imagen', '')
 
     # Reemplazar con alternativa
     item['producto_id'] = item['alternativa_id']
     item['nombre'] = item['alternativa_nombre']
     item['supermercado'] = item['alternativa_super']
     item['precio'] = item['alternativa_precio']
+    alt_prod = db.obtener_producto_por_id(item['producto_id'])
+    item['url_imagen'] = alt_prod.get('url_imagen', '') if alt_prod else ''
 
     # Recalcular alternativa desde la nueva posición
     nueva_alt = _buscar_alternativa(db, item['producto_id'])
@@ -163,6 +166,7 @@ def _deshacer_intercambio(db, indice):
     item['nombre'] = item['original_nombre']
     item['supermercado'] = item['original_super']
     item['precio'] = item['original_precio']
+    item['url_imagen'] = item.get('original_url_imagen', '')
 
     # Limpiar backup
     item['original_id'] = None
@@ -246,12 +250,12 @@ def _tarjeta_cesta_html(item, indice):
 
     url_imagen = item.get('url_imagen', '')
     img_html = ""
-    if url_imagen:
+    if isinstance(url_imagen, str) and url_imagen.startswith('http'):
         img_html = (
             f'<img src="{url_imagen}" '
             f'style="width:56px;height:56px;object-fit:contain;'
             f'border-radius:8px;background:#F5F7FA;flex-shrink:0;margin-right:10px" '
-            f'onerror="this.style.display=\'none\'" alt="">'
+            f'onerror="this.onerror=null;this.removeAttribute(\'src\');this.style.background=\'#E0E4E8\'" alt="">'
         )
 
     return (

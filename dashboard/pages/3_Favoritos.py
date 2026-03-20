@@ -61,6 +61,7 @@ def _enriquecer_favoritos(db, df_favs):
             'categoria_normalizada': row.get('categoria_normalizada', ''),
             'formato_normalizado': row.get('formato_normalizado', ''),
             'fecha_agregado': row.get('fecha_agregado', ''),
+            'url_imagen': row.get('url_imagen', ''),
         }
         df_hist = db.obtener_historico_precios(prod_id)
         if not df_hist.empty:
