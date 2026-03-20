@@ -134,12 +134,15 @@ def _intercambiar_producto(db, indice):
     item['original_nombre'] = item['nombre']
     item['original_super'] = item['supermercado']
     item['original_precio'] = item['precio']
+    item['original_url_imagen'] = item.get('url_imagen', '')
 
     # Reemplazar con alternativa
     item['producto_id'] = item['alternativa_id']
     item['nombre'] = item['alternativa_nombre']
     item['supermercado'] = item['alternativa_super']
     item['precio'] = item['alternativa_precio']
+    alt_prod = db.obtener_producto_por_id(item['producto_id'])
+    item['url_imagen'] = alt_prod.get('url_imagen', '') if alt_prod else ''
 
     # Recalcular alternativa desde la nueva posición
     nueva_alt = _buscar_alternativa(db, item['producto_id'])
@@ -163,6 +166,7 @@ def _deshacer_intercambio(db, indice):
     item['nombre'] = item['original_nombre']
     item['supermercado'] = item['original_super']
     item['precio'] = item['original_precio']
+    item['url_imagen'] = item.get('original_url_imagen', '')
 
     # Limpiar backup
     item['original_id'] = None
