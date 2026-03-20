@@ -250,12 +250,12 @@ def _tarjeta_cesta_html(item, indice):
 
     url_imagen = item.get('url_imagen', '')
     img_html = ""
-    if url_imagen:
+    if isinstance(url_imagen, str) and url_imagen.startswith('http'):
         img_html = (
             f'<img src="{url_imagen}" '
             f'style="width:56px;height:56px;object-fit:contain;'
             f'border-radius:8px;background:#F5F7FA;flex-shrink:0;margin-right:10px" '
-            f'onerror="this.style.display=\'none\'" alt="">'
+            f'onerror="this.onerror=null;this.removeAttribute(\'src\');this.style.background=\'#E0E4E8\'" alt="">'
         )
 
     return (

@@ -269,12 +269,12 @@ else:
                         color     = COLORES_SUPERMERCADO.get(p_super, '#95A5A6')
 
                         p_img_html = ""
-                        if p_img:
+                        if isinstance(p_img, str) and p_img.startswith('http'):
                             p_img_html = (
                                 f'<img src="{p_img}" '
                                 f'style="width:56px;height:56px;object-fit:contain;'
                                 f'border-radius:8px;background:#F5F7FA;flex-shrink:0;margin-right:10px" '
-                                f'onerror="this.style.display=\'none\'" alt="">'
+                                f'onerror="this.onerror=null;this.removeAttribute(\'src\');this.style.background=\'#E0E4E8\'" alt="">'
                             )
 
                         col_card, col_cant_ed, col_quitar = st.columns(
