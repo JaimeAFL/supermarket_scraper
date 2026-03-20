@@ -819,11 +819,11 @@ if cesta:
                                  "--archivo", _tmp.name],
                                 cwd=_PROJECT_ROOT,
                             )
-                            st.success(
-                                f"Abriendo navegador con tu carrito de "
-                                f"{_nombre_super}. Cuando se carguen todos "
-                                f"los productos, completa el pedido con tus "
-                                f"datos directamente en la web."
+                            st.info(
+                                f"Cargando productos en tu carrito de "
+                                f"{_nombre_super}. El navegador se abrirá "
+                                f"automáticamente con el carrito listo para "
+                                f"que puedas completar el pedido."
                             )
                         except Exception as _e:
                             st.error(f"Error al lanzar el navegador: {_e}")

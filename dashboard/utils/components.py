@@ -450,7 +450,7 @@ def obtener_url_producto(db, producto_id):
         cur = db._cursor()
         cur.execute(
             "SELECT url, id_externo, supermercado "
-            "FROM productos WHERE id = ?",
+            "FROM productos WHERE id = %s",
             (int(producto_id),))
         row = cur.fetchone()
         if row is None:

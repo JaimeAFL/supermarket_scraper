@@ -70,7 +70,7 @@ def _widget_añadir_a_lista(producto_id, df_listas, key_suffix):
             key=f"lista_sel_{key_suffix}",
             label_visibility="collapsed")
     with col_b:
-        if st.button("+ Lista", key=f"lista_btn_{key_suffix}",
+        if st.button("Añadir a lista", key=f"lista_btn_{key_suffix}",
                       use_container_width=True):
             ok = db.añadir_producto_a_lista(opciones[lista_sel], producto_id)
             if ok:
