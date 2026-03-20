@@ -565,10 +565,10 @@ class DatabaseManager:
         cur = self._cursor()
         try:
             cur.execute("""
-                SELECT p.id, p.nombre, p.supermercado, p.marca,
+                SELECT p.id, p.id_externo, p.nombre, p.supermercado, p.marca,
                        p.categoria_normalizada, p.formato_normalizado,
                        p.tipo_producto, p.nombre_normalizado,
-                       p.url_imagen,
+                       p.url, p.url_imagen,
                        (SELECT precio FROM precios WHERE producto_id=p.id
                         ORDER BY fecha_captura DESC LIMIT 1) AS precio
                 FROM productos p
