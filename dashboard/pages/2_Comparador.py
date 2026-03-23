@@ -39,7 +39,15 @@ def _añadir_precio_unitario(df):
     for _, row in df.iterrows():
         fmt = row.get('formato_normalizado', '') or ''
         precio = row.get('precio', 0) or 0
-        pu, unidad = calcular_precio_unitario(precio, fmt)
+        # Usar precio_referencia de la BD si ya viene calculado; si no, calcularlo
+        precio_ref_bd = row.get('precio_referencia') or None
+        unidad_ref_bd = row.get('unidad_referencia') or ''
+        if precio_ref_bd and unidad_ref_bd:
+            pu, unidad = precio_ref_bd, unidad_ref_bd
+        else:
+            calc = calcular_precio_unitario(precio, fmt)
+            pu = calc['precio_referencia']
+            unidad = calc['unidad_referencia']
         precios_u.append(pu)
         unidades.append(unidad)
     df = df.copy()
@@ -259,7 +267,7 @@ if busqueda:
         encabezado("Todos los productos encontrados",
                     "format_list_bulleted", nivel=3)
 
-        col_f1, col_f2 = st.columns(2)
+        col_f1, col_f2, col_f3 = st.columns(3)
         with col_f1:
             supers_sel = st.multiselect(
                 "Filtrar supermercados:",
@@ -275,13 +283,28 @@ if busqueda:
                     if pmin < pmax else (pmin, pmax))
             else:
                 rango = (0.0, 999.0)
+        with col_f3:
+            tiene_precio_unitario = (
+                df_principal['precio_unitario'].notna().any()
+                if not df_principal.empty else False)
+            orden_comp = st.radio(
+                "Ordenar por:",
+                ["Precio de referencia (€/kg, €/L...)", "Precio de venta (€)"],
+                key="comp_orden",
+                horizontal=True,
+                disabled=not tiene_precio_unitario,
+                index=0 if tiene_precio_unitario else 1,
+            )
 
         df_filtrado = df_principal[
             (df_principal['supermercado'].isin(supers_sel))
             & (df_principal['precio'] >= rango[0])
             & (df_principal['precio'] <= rango[1])]
 
-        if df_filtrado['precio_unitario'].notna().any():
+        usar_precio_ref = (
+            orden_comp == "Precio de referencia (€/kg, €/L...)"
+            and df_filtrado['precio_unitario'].notna().any())
+        if usar_precio_ref:
             df_filtrado = df_filtrado.sort_values(
                 'precio_unitario', na_position='last')
         else:
@@ -296,7 +319,8 @@ if busqueda:
         else:
             cols = ['nombre', 'supermercado', 'precio',
                     'formato_normalizado', 'precio_unitario',
-                    'unidad_precio', 'marca', 'categoria_normalizada']
+                    'unidad_precio', 'precio_referencia', 'unidad_referencia',
+                    'marca', 'categoria_normalizada']
             cols = [c for c in cols if c in df_filtrado.columns]
             st.dataframe(df_filtrado[cols],
                          use_container_width=True, hide_index=True)

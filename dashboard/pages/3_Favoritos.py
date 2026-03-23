@@ -62,6 +62,8 @@ def _enriquecer_favoritos(db, df_favs):
             'formato_normalizado': row.get('formato_normalizado', ''),
             'fecha_agregado': row.get('fecha_agregado', ''),
             'url_imagen': row.get('url_imagen', ''),
+            'precio_referencia': row.get('precio_referencia') or None,
+            'unidad_referencia': row.get('unidad_referencia', '') or '',
         }
         df_hist = db.obtener_historico_precios(prod_id)
         if not df_hist.empty:
@@ -390,6 +392,8 @@ if not df_favs.empty:
                         supermercado=row['supermercado'],
                         precio=row['precio_actual'],
                         formato=row.get('formato_normalizado', ''),
+                        precio_referencia=row.get('precio_referencia') or None,
+                        unidad_referencia=row.get('unidad_referencia', '') or '',
                         badges_extra=badges),
                     unsafe_allow_html=True)
             st.markdown("---")

@@ -131,10 +131,18 @@ def inicializar_base_datos(db_path: str = None) -> str:
         ON CONFLICT (supermercado) DO NOTHING
     """)
 
+    # ── Columnas nuevas (idempotente para BDs ya existentes) ─────────
+    cur.execute("""
+        ALTER TABLE precios
+            ADD COLUMN IF NOT EXISTS precio_referencia REAL,
+            ADD COLUMN IF NOT EXISTS unidad_referencia TEXT DEFAULT ''
+    """)
+
     # ── Índices ───────────────────────────────────────────────────────
     indices = [
         "CREATE INDEX IF NOT EXISTS idx_precios_producto      ON precios(producto_id)",
         "CREATE INDEX IF NOT EXISTS idx_precios_fecha         ON precios(fecha_captura)",
+        "CREATE INDEX IF NOT EXISTS idx_precios_referencia    ON precios(precio_referencia)",
         "CREATE INDEX IF NOT EXISTS idx_productos_super       ON productos(supermercado)",
         "CREATE INDEX IF NOT EXISTS idx_productos_nombre      ON productos(nombre)",
         "CREATE INDEX IF NOT EXISTS idx_productos_tipo        ON productos(tipo_producto)",

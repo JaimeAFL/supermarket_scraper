@@ -72,31 +72,87 @@ class TestGetIdsCategorys:
 
 class TestGetProductsByCategory:
 
+    # ── Datos de mock reutilizables ─────────────────────────────────────
+    # Producto normal (no a granel): unit_price = precio por unidad,
+    # bulk_price = precio por litro (coincide porque es 1 L).
+    _PRODUCTO_NORMAL = {
+        'id': '12345',
+        'display_name': 'Leche Hacendado 1L',
+        'share_url': 'https://tienda.mercadona.es/product/12345',
+        'thumbnail': 'https://prod-mercadona.imgix.net/images/12345.jpg',
+        'price_instructions': {
+            'unit_price': 0.89,
+            'bulk_price': 0.89,
+            'unit_size': '1',
+            'size_format': 'L',
+            'approx_size': False,
+        },
+    }
+
+    # Producto a granel: unit_price = precio ESTIMADO por pieza (~500 g),
+    # bulk_price = precio de REFERENCIA por kg (tasa real de facturación).
+    _PRODUCTO_GRANEL = {
+        'id': '67890',
+        'display_name': 'Tomates cherry',
+        'share_url': 'https://tienda.mercadona.es/product/67890',
+        'thumbnail': 'https://prod-mercadona.imgix.net/images/67890.jpg',
+        'price_instructions': {
+            'unit_price': 1.49,   # precio estimado por bolsa (~500 g)
+            'bulk_price': 2.99,   # precio de referencia €/kg
+            'unit_size': '498',   # peso aproximado en gramos
+            'size_format': 'g',
+            'approx_size': True,
+        },
+    }
+
+    def _mock_respuesta(self, productos):
+        """Devuelve un mock de requests.get para la lista de productos dada."""
+        return MagicMock(
+            raise_for_status=MagicMock(return_value=None),
+            json=MagicMock(return_value={
+                'categories': [{'id': 1, 'decimalName': 'Test', 'products': productos}]
+            }),
+        )
+
     @patch('mercadona.time.sleep')
     @patch('mercadona.requests.get')
     def test_devuelve_dataframe(self, mock_get, mock_sleep):
-        """Categoría con productos → DataFrame con columnas correctas."""
-        mock_get.return_value = MagicMock(
-            raise_for_status=MagicMock(return_value=None),
-            json=MagicMock(return_value={
-                'categories': [{
-                    'id': 1, 'decimalName': 'Lácteos',
-                    'products': [{
-                        'id': '12345', 'display_name': 'Leche Hacendado 1L',
-                        'price_instructions': {
-                            'unit_price': 0.89, 'bulk_price': 0.89,
-                            'unit_size': '1', 'size_format': 'L',
-                        },
-                        'photos': [{'regular': 'https://img.mercadona.es/12345.jpg'}],
-                    }]
-                }]
-            })
-        )
+        """Categoría con productos → DataFrame no vacío con columnas correctas."""
+        mock_get.return_value = self._mock_respuesta([self._PRODUCTO_NORMAL])
         resultado = get_products_by_category([1])
         assert isinstance(resultado, pd.DataFrame)
-        if not resultado.empty:
-            for col in COLUMNAS_ESPERADAS:
-                assert col in resultado.columns
+        assert not resultado.empty, "El DataFrame no debería estar vacío"
+        for col in COLUMNAS_ESPERADAS:
+            assert col in resultado.columns, f"Falta la columna '{col}'"
+
+    @patch('mercadona.time.sleep')
+    @patch('mercadona.requests.get')
+    def test_granel_preserva_unit_price_como_precio(self, mock_get, mock_sleep):
+        """Granel (approx_size=True): Precio = unit_price, NO bulk_price.
+
+        unit_price es el precio estimado por pieza (ej: ~1,49 € por ~500 g).
+        bulk_price es el precio de referencia €/kg (ej: 2,99 €/kg).
+        No deben igualarse: hacerlo borraría el precio de venta estimado.
+        """
+        mock_get.return_value = self._mock_respuesta([self._PRODUCTO_GRANEL])
+        resultado = get_products_by_category([1])
+        assert not resultado.empty
+        fila = resultado.iloc[0]
+        assert float(fila['Precio']) == pytest.approx(1.49), (
+            "Precio debe ser unit_price (precio estimado por pieza), no bulk_price")
+        assert float(fila['Precio_por_unidad']) == pytest.approx(2.99), (
+            "Precio_por_unidad debe ser bulk_price (precio de referencia €/kg)")
+
+    @patch('mercadona.time.sleep')
+    @patch('mercadona.requests.get')
+    def test_no_granel_precio_correcto(self, mock_get, mock_sleep):
+        """Producto normal (approx_size=False): Precio = unit_price original."""
+        mock_get.return_value = self._mock_respuesta([self._PRODUCTO_NORMAL])
+        resultado = get_products_by_category([1])
+        assert not resultado.empty
+        fila = resultado.iloc[0]
+        assert float(fila['Precio']) == pytest.approx(0.89)
+        assert float(fila['Precio_por_unidad']) == pytest.approx(0.89)
 
     def test_lista_vacia_devuelve_df_vacio(self):
         """Sin categorías, devuelve DataFrame vacío."""
