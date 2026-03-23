@@ -517,6 +517,74 @@ def boton_consultar_web(url, key_suffix=""):
                   use_container_width=True)
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# LISTAS DE LA COMPRA — botón de acción rápida
+# ═══════════════════════════════════════════════════════════════════════
+
+def widget_añadir_a_lista(db, producto_id, key_suffix):
+    """Botón popover para añadir un producto a una lista de la compra.
+
+    Muestra un botón compacto ('Añadir a lista') que al pulsarlo despliega
+    un panel con:
+      - Selector de la lista destino
+      - Campo de cantidad (mínimo 1, por defecto 1)
+      - Botón de confirmación
+
+    Si el usuario no tiene listas creadas, muestra un mensaje orientativo
+    en lugar del formulario.
+
+    Args:
+        db:          Instancia de DatabaseManager.
+        producto_id: ID del producto en la base de datos.
+        key_suffix:  Sufijo único para evitar conflictos de session_state.
+                     Recomendado: incluir el producto_id
+                     (ej: f"comp_{producto_id}").
+    """
+    with st.popover("Añadir a lista"):
+        # Encabezado con icono playlist_add (Material Icons Outlined)
+        st.markdown(
+            '<div style="display:flex;align-items:center;gap:6px;'
+            'margin-bottom:10px">'
+            '<span class="material-icons-outlined" '
+            'style="font-size:20px">playlist_add</span>'
+            '<strong>Añadir a lista</strong></div>',
+            unsafe_allow_html=True)
+
+        df_listas = db.obtener_listas()
+
+        if df_listas.empty:
+            # El usuario no tiene listas: orientarle hacia la página de listas
+            st.caption(
+                "Crea tu primera lista en la página **Mis Listas**.")
+        else:
+            opciones = {
+                row['nombre']: int(row['id'])
+                for _, row in df_listas.iterrows()
+            }
+            lista_sel = st.selectbox(
+                "Lista:",
+                list(opciones.keys()),
+                key=f"lista_sel_{key_suffix}",
+            )
+            cantidad = st.number_input(
+                "Cantidad:",
+                min_value=1, value=1, step=1,
+                key=f"lista_cant_{key_suffix}",
+            )
+            if st.button(
+                "Confirmar",
+                key=f"lista_btn_{key_suffix}",
+                use_container_width=True,
+            ):
+                ok = db.añadir_producto_a_lista(
+                    opciones[lista_sel], int(producto_id), int(cantidad)
+                )
+                if ok:
+                    st.success(f"Añadido a '{lista_sel}'.")
+                else:
+                    st.error("No se pudo añadir.")
+
+
 def añadir_lista_favoritos_a_cesta(db):
     """Añade todos los productos de favoritos a la cesta."""
     df_favs = db.obtener_favoritos()
