@@ -16,7 +16,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from matching.normalizer import normalizar_producto, normalizar_formato
+from matching.normalizer import normalizar_producto, normalizar_formato, calcular_precio_unitario
 
 
 # =============================================================================
@@ -301,3 +301,150 @@ class TestRobustez:
     def test_formato_none(self):
         r = normalizar_producto("Test producto", "Mercadona", None)
         assert isinstance(r["formato_normalizado"], str)
+
+
+# =============================================================================
+# TESTS DE CALCULAR_PRECIO_UNITARIO
+# =============================================================================
+#
+# Verificación previa (Tarea 3): ningún test_*.py del proyecto usaba
+# calcular_precio_unitario() con la firma antigua (devolvía tuple).
+# La función devuelve ahora un dict; todos los tests de abajo usan ese formato.
+# Los callers de producción (database_db_manager.py, 2_Comparador.py) ya
+# acceden mediante calc['clave'] y no necesitan actualización.
+
+class TestCalcularPrecioUnitario:
+    """Tests para calcular_precio_unitario() — devuelve un dict con 6 claves.
+
+    Claves del dict:
+        precio_venta          (float)       — precio de entrada sin modificar
+        precio_referencia     (float|None)  — precio por kg/L/ud para comparar
+        unidad_referencia     (str)         — "€/kg", "€/L", "€/ud", "€/m" o ""
+        es_pack               (bool)        — True si el formato es N x cantidad
+        precio_por_unidad_pack (float|None) — precio de 1 unidad del pack
+        unidades_pack         (int|None)    — número de unidades del pack
+    """
+
+    # ── Caso 1: producto normal en gramos ────────────────────────────────────
+    def test_gramos_calcula_precio_por_kg(self):
+        """Cacao 100 g a 2,15 € → precio de referencia 21,50 €/kg.
+
+        El normalizer convierte gramos a kg antes de dividir:
+        2,15 / 0,100 kg = 21,50 €/kg.
+        """
+        r = calcular_precio_unitario(2.15, "100 g")
+
+        assert r['precio_venta'] == pytest.approx(2.15)
+        assert r['precio_referencia'] == pytest.approx(21.50)
+        assert r['unidad_referencia'] == "€/kg"
+        assert r['es_pack'] is False
+        assert r['precio_por_unidad_pack'] is None
+        assert r['unidades_pack'] is None
+
+    # ── Caso 2: pack de latas ────────────────────────────────────────────────
+    def test_pack_latas_detecta_pack_y_calcula_por_litro(self):
+        """Pack 6 × 0,33 L a 8,40 € → es_pack=True, 1,40 €/lata, 4,24 €/L.
+
+        El formato "6 x 0.33 L" viene de normalizar_formato("33 cl") aplicado
+        a un pack de 6 latas.  El precio por litro se calcula sobre el total:
+        8,40 / (6 × 0,33 L) = 8,40 / 1,98 L ≈ 4,24 €/L.
+        """
+        r = calcular_precio_unitario(8.40, "6 x 0.33 L")
+
+        assert r['precio_venta'] == pytest.approx(8.40)
+        assert r['es_pack'] is True
+        assert r['unidades_pack'] == 6
+        assert r['precio_por_unidad_pack'] == pytest.approx(1.40)
+        assert r['precio_referencia'] == pytest.approx(4.24)
+        assert r['unidad_referencia'] == "€/L"
+
+    # ── Caso 3: precio_venta == precio_referencia ────────────────────────────
+    def test_arroz_1kg_suprime_referencia_redundante(self):
+        """Arroz 1 kg a 1,10 € → precio_referencia suprimido por ser igual al precio_venta.
+
+        Para un paquete de exactamente 1 kg el cociente precio/kg coincide
+        con el precio de venta.  Como el dato no aporta información adicional
+        al usuario, la función lo elimina (precio_referencia=None, unidad='').
+        """
+        r = calcular_precio_unitario(1.10, "1 kg")
+
+        assert r['precio_venta'] == pytest.approx(1.10)
+        assert r['precio_referencia'] is None   # suprimido: igual al precio_venta
+        assert r['unidad_referencia'] == ""
+        assert r['es_pack'] is False
+
+    # ── Caso 4: sin formato ──────────────────────────────────────────────────
+    def test_sin_formato_no_calcula_referencia(self):
+        """Producto sin formato → precio_venta conservado, precio_referencia=None.
+
+        Sin información de cantidad/unidad no es posible calcular un precio
+        de referencia normalizado (€/kg, €/L…).
+        """
+        r = calcular_precio_unitario(2.50, "")
+
+        assert r['precio_venta'] == pytest.approx(2.50)
+        assert r['precio_referencia'] is None
+        assert r['unidad_referencia'] == ""
+        assert r['es_pack'] is False
+
+    # ── Casos 5 y 6: precio_unidad_raw del scraper ───────────────────────────
+    @pytest.mark.parametrize("raw, descripcion", [
+        ("3,50",  "string con coma decimal (formato europeo)"),
+        (3.50,    "float directo (ej: Alcampo / Mercadona bulk_price)"),
+    ])
+    def test_precio_unidad_raw_usa_valor_del_scraper_sin_recalcular(self, raw, descripcion):
+        """Cuando el scraper ya provee precio_unidad_raw, se usa directamente.
+
+        El formato "350 g" permitiría CALCULAR 1,75/0,350 = 5,00 €/kg, pero si
+        el scraper envía su propio precio de referencia (ej: 3,50 €/kg)
+        ese valor tiene prioridad y no se recalcula.
+
+        Cubre: string con coma decimal ("3,50") y float (3.50).
+        """
+        r = calcular_precio_unitario(1.75, "350 g", raw)
+
+        assert r['precio_venta'] == pytest.approx(1.75)
+        assert r['precio_referencia'] == pytest.approx(3.50), (
+            f"Se esperaba el valor del scraper (3,50) para input '{raw}' ({descripcion}), "
+            f"no el recalculado desde el formato (5,00 €/kg)"
+        )
+        assert r['unidad_referencia'] == "€/kg"
+        assert r['es_pack'] is False
+
+    # ── Caso 7: granel Mercadona, formato "kg" sin cantidad ──────────────────
+    def test_granel_formato_kg_con_bulk_price_del_scraper(self):
+        """Producto a granel Mercadona: formato "kg", bulk_price separado como raw.
+
+        Tras la corrección de Petición 3, para productos a granel (approx_size=True):
+          - precio_venta    = unit_price = precio ESTIMADO por pieza (ej: 1,49 €)
+          - precio_unidad_raw = bulk_price = precio de REFERENCIA €/kg (ej: 2,99 €/kg)
+
+        El formato "kg" (standalone, sin cantidad) viene de size_format="kg" de la API
+        de Mercadona cuando no se puede determinar la cantidad exacta.
+        La función infiere unidad_referencia="€/kg" desde el formato standalone y
+        usa bulk_price como precio_referencia porque es diferente a precio_venta.
+        """
+        r = calcular_precio_unitario(1.49, "kg", 2.99)
+
+        assert r['precio_venta'] == pytest.approx(1.49)
+        assert r['precio_referencia'] == pytest.approx(2.99)
+        assert r['unidad_referencia'] == "€/kg"
+        assert r['es_pack'] is False
+        assert r['precio_por_unidad_pack'] is None
+        assert r['unidades_pack'] is None
+
+    # ── Robustez ─────────────────────────────────────────────────────────────
+    def test_precio_cero_devuelve_dict_vacio(self):
+        """Precio cero (o None) → dict con precio_venta=0 y referencias a None."""
+        r = calcular_precio_unitario(0, "500 g")
+
+        assert r['precio_venta'] == 0.0
+        assert r['precio_referencia'] is None
+        assert r['es_pack'] is False
+
+    def test_formato_none_no_falla(self):
+        """formato_normalizado=None no debe lanzar excepción."""
+        r = calcular_precio_unitario(1.99, None)
+
+        assert r['precio_venta'] == pytest.approx(1.99)
+        assert isinstance(r['unidad_referencia'], str)
