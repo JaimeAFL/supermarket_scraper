@@ -99,6 +99,8 @@ def _añadir_a_cesta(db, producto_id, cantidad):
         'formato_normalizado': prod.get('formato_normalizado', ''),
         'marca': prod.get('marca', ''),
         'url_imagen': prod.get('url_imagen', ''),
+        'precio_referencia': prod.get('precio_referencia') or None,
+        'unidad_referencia': prod.get('unidad_referencia', '') or '',
         'cantidad': cantidad,
         'alternativa_id': int(alt['id']) if alt else None,
         'alternativa_nombre': alt.get('nombre') if alt else None,
@@ -248,6 +250,20 @@ def _tarjeta_cesta_html(item, indice):
             'style="font-size:14px">check_circle</span>'
             'Mejor precio</span>')
 
+    # Precio de referencia (€/kg, €/L...) si está disponible
+    precio_ref = item.get('precio_referencia')
+    unidad_ref = item.get('unidad_referencia', '')
+    if precio_ref and unidad_ref:
+        ref_html = (
+            f'<div class="product-unit-price">'
+            f'{precio_ref:.2f} {unidad_ref}</div>'
+        )
+    else:
+        ref_html = (
+            f'<div class="product-unit-price">'
+            f'{item["precio"]:.2f} €/ud</div>'
+        )
+
     return (
         f'<div class="product-card" style="margin-bottom:6px">'
         f'<div class="product-super" style="background:{color}"></div>'
@@ -259,8 +275,7 @@ def _tarjeta_cesta_html(item, indice):
         f'</div>'
         f'<div style="text-align:right">'
         f'<div class="product-price">{subtotal:.2f} €</div>'
-        f'<div class="product-unit-price">'
-        f'{item["precio"]:.2f} €/ud</div>'
+        f'{ref_html}'
         f'</div>'
         f'</div>'
     )

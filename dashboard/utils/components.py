@@ -316,17 +316,26 @@ def aplicar_orden(df, orden, col_precio='precio'):
 
 def tarjeta_producto_html(nombre, supermercado, precio, formato="",
                           precio_unitario=None, unidad_precio="",
+                          precio_referencia=None, unidad_referencia="",
                           badges_extra=None):
-    """Genera HTML de una tarjeta de producto."""
+    """Genera HTML de una tarjeta de producto.
+
+    Muestra el precio de venta en grande y, debajo en gris pequeño,
+    el precio de referencia (€/kg, €/L...) cuando está disponible.
+    """
     color_super = COLORES_SUPERMERCADO.get(supermercado, '#95A5A6')
     precio_str = (f"{precio:.2f} €"
                   if isinstance(precio, (int, float)) else str(precio))
 
+    # precio_referencia tiene prioridad; precio_unitario es alias heredado
+    _ref = precio_referencia if precio_referencia is not None else precio_unitario
+    _ref_unidad = unidad_referencia if unidad_referencia else unidad_precio
+
     pu_html = ""
-    if precio_unitario and unidad_precio:
+    if _ref and _ref_unidad:
         pu_html = (
             f'<div class="product-unit-price">'
-            f'{precio_unitario:.2f} {unidad_precio}'
+            f'{_ref:.2f} {_ref_unidad}'
             f'</div>'
         )
 

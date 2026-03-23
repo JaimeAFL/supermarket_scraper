@@ -269,6 +269,19 @@ else:
                         color     = COLORES_SUPERMERCADO.get(p_super, '#95A5A6')
                         _has_img  = isinstance(p_img, str) and p_img.startswith('http')
 
+                        p_ref = prod.get('precio_referencia') or None
+                        p_ref_unidad = prod.get('unidad_referencia', '') or ''
+                        if p_ref and p_ref_unidad:
+                            _ref_html = (
+                                f'<div class="product-unit-price">'
+                                f'{p_ref:.2f} {p_ref_unidad}</div>'
+                            )
+                        else:
+                            _ref_html = (
+                                f'<div class="product-unit-price">'
+                                f'x{p_cant}  =  '
+                                f'{p_precio * p_cant:.2f} €</div>'
+                            )
                         _card_html = (
                             f'<div class="product-card" '
                             f'style="margin-bottom:4px;padding:10px 14px">'
@@ -278,14 +291,13 @@ else:
                             f'<div class="product-name">{p_nombre}</div>'
                             f'<div class="product-meta">'
                             f'{p_super}'
-                            f'{"  ·  " + p_fmt if p_fmt else ""}</div>'
+                            f'{"  ·  " + p_fmt if p_fmt else ""}'
+                            f'  ·  x{p_cant}</div>'
                             f'</div>'
                             f'<div style="text-align:right">'
                             f'<div class="product-price">'
                             f'{p_precio:.2f} €</div>'
-                            f'<div class="product-unit-price">'
-                            f'x{p_cant}  =  '
-                            f'{p_precio * p_cant:.2f} €</div>'
+                            f'{_ref_html}'
                             f'</div></div>'
                         )
 
