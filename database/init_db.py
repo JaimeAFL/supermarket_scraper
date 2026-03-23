@@ -23,7 +23,7 @@ def inicializar_base_datos(db_path: str = None) -> str:
 
     url = _get_database_url()
     conn = psycopg2.connect(url, sslmode="require", connect_timeout=30)
-    conn.autocommit = False
+    conn.autocommit = True  # DDL libera locks inmediatamente, sin transacción colgada
     cur = conn.cursor()
     cur.execute("SET lock_timeout = '15s'")
 
@@ -156,7 +156,6 @@ def inicializar_base_datos(db_path: str = None) -> str:
     for idx in indices:
         cur.execute(idx)
 
-    conn.commit()
     cur.close()
     conn.close()
 
