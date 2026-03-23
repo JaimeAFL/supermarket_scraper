@@ -124,7 +124,7 @@ def generar_pdf_cesta(cesta):
             if len(nombre_txt) > 46:
                 nombre_txt = nombre_txt[:43] + '...'
 
-            linea = f'[ ]  {nombre_txt}{fmt_txt}'
+            linea = f'{nombre_txt}{fmt_txt}'
             precio_txt = f'x{cantidad}    {sub:.2f} {eur}'
 
             # Salto de página manual antes de dibujar imagen + texto
