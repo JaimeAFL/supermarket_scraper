@@ -201,6 +201,14 @@ def gestion_carrefour():
     session = requests.Session()
     session.headers.update(_HEADERS)
 
+    # Visitar la home primero para obtener cookies de sesión
+    try:
+        r = session.get(BASE_URL, timeout=15)
+        logger.info(f"Sesión inicializada (home: HTTP {r.status_code})")
+    except Exception as exc:
+        logger.warning(f"No se pudo inicializar sesión: {exc}")
+    time.sleep(1.5)
+
     todos     = []
     ids_vistos = set()
 
