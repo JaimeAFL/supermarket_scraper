@@ -16,7 +16,7 @@ except ImportError:
 
 # Importar normalizador (graceful fallback)
 try:
-    from matching.normalizer import normalizar_producto
+    from matching.normalizer import normalizar_producto, calcular_precio_unitario
     _NORMALIZER_OK = True
 except ImportError:
     _NORMALIZER_OK = False
@@ -135,6 +135,16 @@ class DatabaseManager:
                 )
                 prod_id = cur.fetchone()["id"]
 
+                # ── Calcular precio de referencia ─────────────────────
+                precio_ref = None
+                unidad_ref = ''
+                if _NORMALIZER_OK:
+                    pu_raw = row.get("Precio_por_unidad") or row.get("Precio_unidad")
+                    calc = calcular_precio_unitario(
+                        precio, formato_normalizado, pu_raw)
+                    precio_ref = calc['precio_referencia']
+                    unidad_ref = calc['unidad_referencia']
+
                 # ── Insertar precio: 1 registro por producto por DÍA ──
                 cur.execute(
                     "SELECT id FROM precios "
@@ -144,9 +154,11 @@ class DatabaseManager:
                 if not cur.fetchone():
                     cur.execute(
                         "INSERT INTO precios "
-                        "(producto_id, precio, precio_por_unidad, fecha_captura)"
-                        " VALUES (%s,%s,%s,%s)",
-                        (prod_id, precio, precio_por_unidad, ts),
+                        "(producto_id, precio, precio_por_unidad, "
+                        " precio_referencia, unidad_referencia, fecha_captura)"
+                        " VALUES (%s,%s,%s,%s,%s,%s)",
+                        (prod_id, precio, precio_por_unidad,
+                         precio_ref, unidad_ref, ts),
                     )
                     precios_ok += 1
                 else:
@@ -229,6 +241,7 @@ class DatabaseManager:
                        p.nombre_normalizado, p.categoria_normalizada,
                        p.formato_normalizado,
                        pr.precio, pr.precio_por_unidad AS precio_unidad,
+                       pr.precio_referencia, pr.unidad_referencia,
                        pr.fecha_captura
                 FROM productos p
                 JOIN precios pr ON pr.id = (
@@ -340,12 +353,14 @@ class DatabaseManager:
             sql = f"""
                 SELECT id, nombre, supermercado, formato,
                        formato_normalizado, precio,
-                       precio_unidad, url, url_imagen,
+                       precio_unidad, precio_referencia, unidad_referencia,
+                       url, url_imagen,
                        tipo_producto, marca, categoria_normalizada, prioridad
                 FROM (
                     SELECT p.id, p.nombre, p.supermercado, p.formato,
                            p.formato_normalizado,
                            pr.precio, pr.precio_por_unidad AS precio_unidad,
+                           pr.precio_referencia, pr.unidad_referencia,
                            p.url, p.url_imagen,
                            p.tipo_producto, p.marca, p.categoria_normalizada,
                            1 AS prioridad,
@@ -365,6 +380,7 @@ class DatabaseManager:
                     SELECT p.id, p.nombre, p.supermercado, p.formato,
                            p.formato_normalizado,
                            pr.precio, pr.precio_por_unidad AS precio_unidad,
+                           pr.precio_referencia, pr.unidad_referencia,
                            p.url, p.url_imagen,
                            p.tipo_producto, p.marca, p.categoria_normalizada,
                            2 AS prioridad,
@@ -545,7 +561,8 @@ class DatabaseManager:
                        p.formato_normalizado,
                        p.tipo_producto, p.marca, p.categoria_normalizada,
                        p.url_imagen,
-                       pr.precio, f.fecha_agregado
+                       pr.precio, pr.precio_referencia, pr.unidad_referencia,
+                       f.fecha_agregado
                 FROM favoritos f
                 JOIN productos p ON p.id=f.producto_id
                 LEFT JOIN precios pr ON pr.id = (
@@ -569,9 +586,13 @@ class DatabaseManager:
                        p.categoria_normalizada, p.formato_normalizado,
                        p.tipo_producto, p.nombre_normalizado,
                        p.url, p.url_imagen,
-                       (SELECT precio FROM precios WHERE producto_id=p.id
-                        ORDER BY fecha_captura DESC LIMIT 1) AS precio
+                       pr.precio,
+                       pr.precio_referencia, pr.unidad_referencia
                 FROM productos p
+                LEFT JOIN precios pr ON pr.id = (
+                    SELECT id FROM precios WHERE producto_id=p.id
+                    ORDER BY fecha_captura DESC LIMIT 1
+                )
                 WHERE p.id = %s
             """, (producto_id,))
             row = cur.fetchone()
@@ -683,12 +704,13 @@ class DatabaseManager:
                    p.id AS producto_id, p.nombre, p.supermercado,
                    p.marca, p.formato_normalizado, p.categoria_normalizada,
                    p.url, p.url_imagen,
-                   (SELECT precio FROM precios
-                    WHERE producto_id = p.id
-                    ORDER BY fecha_captura DESC LIMIT 1
-                   ) AS precio
+                   pr.precio, pr.precio_referencia, pr.unidad_referencia
             FROM lista_productos lp
             JOIN productos p ON p.id = lp.producto_id
+            LEFT JOIN precios pr ON pr.id = (
+                SELECT id FROM precios WHERE producto_id = p.id
+                ORDER BY fecha_captura DESC LIMIT 1
+            )
             WHERE lp.lista_id = %s
             ORDER BY p.supermercado, p.nombre
         """, (lista_id,))

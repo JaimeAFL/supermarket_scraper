@@ -39,7 +39,15 @@ def _añadir_precio_unitario(df):
     for _, row in df.iterrows():
         fmt = row.get('formato_normalizado', '') or ''
         precio = row.get('precio', 0) or 0
-        pu, unidad = calcular_precio_unitario(precio, fmt)
+        # Usar precio_referencia de la BD si ya viene calculado; si no, calcularlo
+        precio_ref_bd = row.get('precio_referencia') or None
+        unidad_ref_bd = row.get('unidad_referencia') or ''
+        if precio_ref_bd and unidad_ref_bd:
+            pu, unidad = precio_ref_bd, unidad_ref_bd
+        else:
+            calc = calcular_precio_unitario(precio, fmt)
+            pu = calc['precio_referencia']
+            unidad = calc['unidad_referencia']
         precios_u.append(pu)
         unidades.append(unidad)
     df = df.copy()

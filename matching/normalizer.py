@@ -476,55 +476,120 @@ _RE_PARSE_FMT = re.compile(
 )
 
 
-def calcular_precio_unitario(precio, formato_normalizado):
-    """Calcula el precio por unidad estándar (€/L, €/kg, €/ud).
+def calcular_precio_unitario(precio, formato_normalizado, precio_unidad_raw=None):
+    """Calcula precio de venta y precio de referencia por unidad estándar.
 
     Args:
-        precio: float, precio del producto
-        formato_normalizado: str, salida de normalizar_formato() (ej: "1 L", "500 g")
+        precio: float, precio de venta del producto en lineal (lo que pagas en caja).
+        formato_normalizado: str, salida de normalizar_formato() (ej: "1 L", "6 x 0.33 L").
+        precio_unidad_raw: str o float opcional, precio por unidad que viene del scraper
+            (ej: "1.76", 1.76). Si es parseable y válido se usa como precio_referencia
+            directamente en lugar de calcularlo.
 
     Returns:
-        tuple: (precio_unitario: float|None, unidad: str)
-            - ("1.76", "€/L") si se puede calcular
-            - (None, "") si no hay datos suficientes
+        dict con:
+            precio_venta (float)         — precio de entrada, sin modificar.
+            precio_referencia (float|None) — precio por kg/L/ud/m para comparar.
+            unidad_referencia (str)      — "€/kg", "€/L", "€/ud", "€/m" o "".
+            es_pack (bool)               — True si el formato indica pack (N x cantidad).
+            precio_por_unidad_pack (float|None) — precio de 1 unidad dentro del pack.
+            unidades_pack (int|None)     — número de unidades del pack.
     """
-    if not precio or not formato_normalizado:
-        return None, ""
+    _vacio = {
+        'precio_venta': float(precio) if precio else 0.0,
+        'precio_referencia': None,
+        'unidad_referencia': '',
+        'es_pack': False,
+        'precio_por_unidad_pack': None,
+        'unidades_pack': None,
+    }
 
-    fmt = formato_normalizado.strip()
+    if not precio:
+        return _vacio
+
+    precio_venta = float(precio)
+    fmt = (formato_normalizado or '').strip()
+
+    # ── Detectar pack y magnitud del formato ─────────────────────────
     m = _RE_PARSE_FMT.match(fmt)
-    if not m:
-        # Formatos standalone: "L", "kg" → el precio YA es por unidad
-        # (Mercadona da precios por litro/kilo directamente)
-        if fmt == "L":
-            return round(precio, 2), "€/L"
-        if fmt == "kg":
-            return round(precio, 2), "€/kg"
-        if fmt == "m":
-            return round(precio, 2), "€/m"
-        return None, ""
 
-    pack = int(m.group(1)) if m.group(1) else 1
-    cantidad = float(m.group(2))
-    unidad = m.group(3)
+    es_pack = False
+    unidades_pack = None
+    precio_por_unidad_pack = None
 
-    total_cantidad = pack * cantidad
-    if total_cantidad <= 0:
-        return None, ""
+    if m and m.group(1):
+        es_pack = True
+        unidades_pack = int(m.group(1))
+        precio_por_unidad_pack = round(precio_venta / unidades_pack, 2)
 
-    # Convertir a unidad estándar para el precio
-    if unidad == 'L':
-        return round(precio / total_cantidad, 2), "€/L"
-    elif unidad == 'kg':
-        return round(precio / total_cantidad, 2), "€/kg"
-    elif unidad == 'g':
-        # Convertir a €/kg
-        total_kg = total_cantidad / 1000
-        if total_kg > 0:
-            return round(precio / total_kg, 2), "€/kg"
-    elif unidad in ('ud',):
-        return round(precio / total_cantidad, 2), "€/ud"
-    elif unidad == 'm':
-        return round(precio / total_cantidad, 2), "€/m"
+    # ── Inferir unidad_referencia desde el formato ────────────────────
+    def _unidad_desde_fmt(m_fmt, fmt_str):
+        if not m_fmt:
+            if fmt_str == 'L':
+                return '€/L'
+            if fmt_str == 'kg':
+                return '€/kg'
+            if fmt_str == 'm':
+                return '€/m'
+            return ''
+        u = m_fmt.group(3).lower()
+        if u in ('l', 'litro', 'litros', 'ml', 'cl', 'dl'):
+            return '€/L'
+        if u in ('kg', 'g', 'gr', 'mg'):
+            return '€/kg'
+        if u in ('ud', 'ud.', 'uds', 'uds.', 'unidad', 'unidades'):
+            return '€/ud'
+        if u in ('m', 'mts', 'mt', 'metro', 'metros', 'cm'):
+            return '€/m'
+        return ''
 
-    return None, ""
+    unidad_referencia = _unidad_desde_fmt(m, fmt)
+
+    # ── precio_referencia: usar valor del scraper si viene y es válido ─
+    precio_referencia = None
+
+    if precio_unidad_raw is not None and precio_unidad_raw != '':
+        try:
+            val = float(str(precio_unidad_raw).replace(',', '.'))
+            if val > 0 and unidad_referencia:
+                precio_referencia = round(val, 2)
+        except (ValueError, TypeError):
+            pass
+
+    # ── Si no vino del scraper, calcular desde formato + precio_venta ─
+    if precio_referencia is None and fmt and unidad_referencia:
+        if not m:
+            # Formatos standalone: "L", "kg", "m" → precio YA es por unidad
+            precio_referencia = round(precio_venta, 2)
+        else:
+            pack_n = int(m.group(1)) if m.group(1) else 1
+            cantidad = float(m.group(2))
+            unidad_raw = m.group(3).lower()
+            total_cantidad = pack_n * cantidad
+
+            if total_cantidad > 0:
+                if unidad_raw == 'g':
+                    total_kg = total_cantidad / 1000
+                    if total_kg > 0:
+                        precio_referencia = round(precio_venta / total_kg, 2)
+                else:
+                    precio_referencia = round(precio_venta / total_cantidad, 2)
+
+    # ── Regla: si precio_referencia == precio_venta no aporta info ────
+    if (precio_referencia is not None
+            and abs(precio_referencia - precio_venta) < 0.001):
+        precio_referencia = None
+        unidad_referencia = ''
+
+    # ── Si no hay unidad no tiene sentido guardar precio_referencia ───
+    if not unidad_referencia:
+        precio_referencia = None
+
+    return {
+        'precio_venta': precio_venta,
+        'precio_referencia': precio_referencia,
+        'unidad_referencia': unidad_referencia,
+        'es_pack': es_pack,
+        'precio_por_unidad_pack': precio_por_unidad_pack,
+        'unidades_pack': unidades_pack,
+    }
