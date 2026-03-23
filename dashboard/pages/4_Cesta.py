@@ -845,7 +845,15 @@ if cesta:
     # PDF
     nombre_pdf = f"lista_compra_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
     try:
-        pdf_bytes = generar_pdf_cesta(cesta)
+        # Enriquecer ítems de cesta con url_imagen desde la BD
+        cesta_con_img = []
+        for _it in cesta:
+            _prod = db.obtener_producto_por_id(_it.get('producto_id'))
+            cesta_con_img.append({
+                **_it,
+                'url_imagen': (_prod.get('url_imagen', '') or '') if _prod else '',
+            })
+        pdf_bytes = generar_pdf_cesta(cesta_con_img)
         st.download_button(
             label="Descargar lista de la compra (PDF)",
             data=pdf_bytes,

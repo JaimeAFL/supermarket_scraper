@@ -118,10 +118,30 @@ def _texto_estado(estado):
 
 
 def _generar_pdf_favoritos(df_enriquecido):
-    """Genera PDF con la lista de favoritos."""
+    """Genera PDF con la lista de favoritos, incluyendo miniatura de imagen."""
+    import tempfile
+    import urllib.request as _urllib
     from fpdf import FPDF
+
     _DEJAVU = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
     _DEJAVU_B = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
+
+    _IMG_W, _IMG_H, _IMG_PAD = 12, 12, 3
+    _ROW_H = 17  # altura fila: 12mm img + espacio para dos líneas de texto
+
+    def _fetch(url):
+        if not url or not url.startswith('http'):
+            return None
+        try:
+            req = _urllib.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with _urllib.urlopen(req, timeout=4) as r:
+                data = r.read()
+            ext = '.png' if url.lower().endswith('.png') else '.jpg'
+            with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
+                f.write(data)
+                return f.name
+        except Exception:
+            return None
 
     pdf = FPDF()
     pdf.add_page()
@@ -144,24 +164,68 @@ def _generar_pdf_favoritos(df_enriquecido):
              ln=True)
     pdf.ln(8)
 
+    _tmp_imgs = []
     for _, row in df_enriquecido.iterrows():
-        pdf.set_font(font, 'B', 11)
-        pdf.set_text_color(31, 41, 55)
+        if pdf.get_y() + _ROW_H > pdf.h - pdf.b_margin:
+            pdf.add_page()
+
+        y0 = pdf.get_y()
+        x0 = pdf.get_x()
+
+        # ── Imagen miniatura ──────────────────────────────────────
+        url_img = row.get('url_imagen', '')
+        img_path = _fetch(url_img)
+        if img_path:
+            _tmp_imgs.append(img_path)
+            try:
+                pdf.image(img_path,
+                          x=x0, y=y0 + (_ROW_H - _IMG_H) / 2,
+                          w=_IMG_W, h=_IMG_H)
+            except Exception:
+                pass
+
+        # ── Texto ─────────────────────────────────────────────────
+        txt_x = x0 + _IMG_W + _IMG_PAD
+        txt_w = 190 - _IMG_W - _IMG_PAD - 45  # reservar 45mm para precio
+
         nombre = row.get('nombre', '')
-        if len(nombre) > 60:
-            nombre = nombre[:57] + '...'
+        if len(nombre) > 52:
+            nombre = nombre[:49] + '...'
         precio = row.get('precio_actual', 0)
-        pdf.cell(140, 7, nombre, ln=False)
-        pdf.cell(0, 7, f'{precio:.2f} {eur}', ln=True, align='R')
-        pdf.set_font(font, '', 9)
-        pdf.set_text_color(107, 114, 128)
         meta = f"{row.get('supermercado', '')} · {row.get('formato_normalizado', '')}"
         estado = _texto_estado(row.get('estado', ''))
-        pdf.cell(0, 5, f'{meta} · {estado}', ln=True)
-        pdf.ln(3)
+
+        # Nombre + precio en primera línea
+        pdf.set_xy(txt_x, y0 + 2)
+        pdf.set_font(font, 'B', 11)
+        pdf.set_text_color(31, 41, 55)
+        pdf.cell(txt_w, 6, nombre, ln=False)
+        pdf.cell(45, 6, f'{precio:.2f} {eur}', ln=False, align='R')
+
+        # Meta + estado en segunda línea
+        pdf.set_xy(txt_x, y0 + 9)
+        pdf.set_font(font, '', 9)
+        pdf.set_text_color(107, 114, 128)
+        meta_estado = f'{meta} · {estado}'
+        if len(meta_estado) > 70:
+            meta_estado = meta_estado[:67] + '...'
+        pdf.cell(0, 5, meta_estado, ln=False)
+
+        pdf.set_y(y0 + _ROW_H)
+
+        # Separador ligero
+        pdf.set_draw_color(230, 230, 230)
+        pdf.line(x0, pdf.get_y(), x0 + 190, pdf.get_y())
+        pdf.ln(1)
+
+    for p in _tmp_imgs:
+        try:
+            os.unlink(p)
+        except Exception:
+            pass
 
     total = len(df_enriquecido)
-    pdf.ln(5)
+    pdf.ln(4)
     pdf.set_font(font, 'B', 12)
     pdf.set_text_color(31, 41, 55)
     pdf.cell(0, 8, f'Total: {total} productos en favoritos', ln=True)

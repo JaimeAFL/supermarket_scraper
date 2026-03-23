@@ -7,6 +7,8 @@ su propio correo (sin necesidad de servidor SMTP).
 """
 
 import os
+import tempfile
+import urllib.request as _urllib
 from datetime import datetime
 from urllib.parse import quote
 
@@ -21,9 +23,42 @@ _DEJAVU = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
 _DEJAVU_B = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
 _DEJAVU_I = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf'
 
+# ── Dimensiones imagen en PDF ──────────────────────────────────────────
+_IMG_W = 12   # mm ancho miniatura
+_IMG_H = 12   # mm alto miniatura
+_IMG_PAD = 3  # mm espacio entre imagen y texto
+_ROW_H = 15   # mm alto de fila con imagen (imagen 12 + 1.5 arriba y abajo)
+
+
+def _fetch_img_temp(url):
+    """Descarga una imagen desde URL a fichero temporal. Devuelve ruta o None."""
+    if not url or not url.startswith('http'):
+        return None
+    try:
+        req = _urllib.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with _urllib.urlopen(req, timeout=4) as resp:
+            data = resp.read()
+        ext = '.png' if url.lower().endswith('.png') else '.jpg'
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
+            f.write(data)
+            return f.name
+    except Exception:
+        return None
+
+
+def _cleanup(paths):
+    for p in paths:
+        try:
+            os.unlink(p)
+        except Exception:
+            pass
+
 
 def generar_pdf_cesta(cesta):
     """Genera un PDF con la lista de la compra agrupada por supermercado.
+
+    Los ítems pueden incluir 'url_imagen' para mostrar una miniatura
+    del producto en la columna izquierda.
 
     Returns:
         bytes: contenido del PDF listo para st.download_button
@@ -53,12 +88,11 @@ def generar_pdf_cesta(cesta):
     por_super = {}
     for item in cesta:
         s = item.get('supermercado', 'Desconocido')
-        if s not in por_super:
-            por_super[s] = []
-        por_super[s].append(item)
+        por_super.setdefault(s, []).append(item)
 
     total_general = 0
     total_items = 0
+    _tmp_imgs = []
 
     for supermercado, items in por_super.items():
         subtotal = sum(
@@ -79,8 +113,6 @@ def generar_pdf_cesta(cesta):
         pdf.line(pdf.get_x(), y_line, pdf.get_x() + 170, y_line)
         pdf.ln(3)
 
-        pdf.set_font(font, '', 11)
-        pdf.set_text_color(55, 65, 81)
         for item in items:
             precio = item.get('precio', 0)
             cantidad = item.get('cantidad', 1)
@@ -89,16 +121,49 @@ def generar_pdf_cesta(cesta):
             fmt_txt = f'  ({formato})' if formato else ''
 
             nombre_txt = item.get('nombre', '')
-            if len(nombre_txt) > 50:
-                nombre_txt = nombre_txt[:47] + '...'
+            if len(nombre_txt) > 46:
+                nombre_txt = nombre_txt[:43] + '...'
 
             linea = f'[ ]  {nombre_txt}{fmt_txt}'
             precio_txt = f'x{cantidad}    {sub:.2f} {eur}'
 
-            pdf.cell(130, 7, linea, ln=False)
-            pdf.cell(0, 7, precio_txt, ln=True, align='R')
+            # Salto de página manual antes de dibujar imagen + texto
+            if pdf.get_y() + _ROW_H > pdf.h - pdf.b_margin:
+                pdf.add_page()
 
-        pdf.ln(5)
+            y0 = pdf.get_y()
+            x0 = pdf.get_x()
+
+            # ── Imagen miniatura ──────────────────────────────────
+            url_img = item.get('url_imagen', '')
+            img_path = _fetch_img_temp(url_img)
+            if img_path:
+                _tmp_imgs.append(img_path)
+                try:
+                    pdf.image(img_path,
+                              x=x0, y=y0 + (_ROW_H - _IMG_H) / 2,
+                              w=_IMG_W, h=_IMG_H)
+                except Exception:
+                    pass
+
+            # ── Texto (siempre con offset de imagen) ──────────────
+            txt_x = x0 + _IMG_W + _IMG_PAD
+            txt_y = y0 + (_ROW_H - 7) / 2  # centra texto 7mm en fila
+
+            pdf.set_xy(txt_x, txt_y)
+            pdf.set_font(font, '', 11)
+            pdf.set_text_color(55, 65, 81)
+
+            # ancho disponible para nombre = 190 - offset_imagen - col_precio
+            name_w = 190 - (_IMG_W + _IMG_PAD) - 52
+            pdf.cell(name_w, 7, linea, ln=False)
+            pdf.cell(52, 7, precio_txt, ln=False, align='R')
+
+            pdf.set_y(y0 + _ROW_H)
+
+        pdf.ln(3)
+
+    _cleanup(_tmp_imgs)
 
     pdf.set_draw_color(60, 60, 60)
     y_line = pdf.get_y()
