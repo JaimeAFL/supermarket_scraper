@@ -1,20 +1,75 @@
 """
 scraper/carrefour.py - Scraper para Carrefour
 
-FIXES aplicados tras inspección real de la red:
-  1. URL de búsqueda: /?query=leche  (no /search?query=...&scope=supermarket)
-  2. API interceptada: carrefour.es/search-api/query/v1/search  (no empathy.co)
-  3. Estructura JSON real: content.docs[] con campos display_name, active_price,
-     product_id, image_path, price_per_unit_text
+Usa la API Empathy/search-api confirmada por inspección de red (marzo 2026).
+No requiere Playwright ni COOKIE_CARREFOUR — llamadas HTTP directas con requests.
+
+Endpoint: GET /search-api/query/v1/search
+Paginación: parámetros start (offset) y rows (tamaño de página = 24)
 """
 
+import os
 import logging
 import time
-import re
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+import random
+import string
+
+import requests
+import pandas as pd
+from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
+
 BASE_URL = "https://www.carrefour.es"
+_API_URL  = f"{BASE_URL}/search-api/query/v1/search"
+
+# Parámetros fijos confirmados por inspección de red (marzo 2026)
+_PARAMS_FIJOS = {
+    "internal":                            "true",
+    "instance":                            "x-carrefour",
+    "env":                                 BASE_URL,
+    "scope":                               "desktop",
+    "lang":                                "es",
+    "session":                             "empathy",
+    "citrusCatalog":                       "food",
+    "catalog":                             "food",
+    "baseUrlCitrus":                       BASE_URL,
+    "enabled":                             "true",
+    "hasConsent":                          "true",
+    "siteKey":                             "wFOzqveg",
+    "grid_def_search_sponsor_product":     "3,5,11,13,19",
+    "grid_def_search_butterfly_banner":    "7-8,15-16",
+    "grid_def_search_sponsor_product_tablet":  "2,4,11,13,19",
+    "grid_def_search_butterfly_banner_tablet":  "6,12",
+    "grid_def_search_sponsor_product_mobile":   "2,4,11,13,19",
+    "grid_def_search_butterfly_banner_mobile":  "6,12",
+    "grid_def_search_luckycart_banner":    "22",
+    "empathypoc":                          "false",
+    "origin":                              "url:external",
+}
+
+_ROWS       = 24   # productos por página (valor real de la API)
+_MAX_PAGINAS = 5   # máximo de páginas por término (= hasta 120 productos)
+
+# Cabeceras que imitan Chrome 134 para evitar bloqueos
+_HEADERS = {
+    "Accept":             "application/json, text/plain, */*",
+    "Accept-Encoding":    "gzip, deflate, br",
+    "Accept-Language":    "es-ES,es;q=0.9",
+    "Origin":             BASE_URL,
+    "Referer":            f"{BASE_URL}/",
+    "Sec-Ch-Ua":          '"Chromium";v="134", "Google Chrome";v="134", "Not-A.Brand";v="99"',
+    "Sec-Ch-Ua-Mobile":   "?0",
+    "Sec-Ch-Ua-Platform": '"Windows"',
+    "Sec-Fetch-Dest":     "empty",
+    "Sec-Fetch-Mode":     "cors",
+    "Sec-Fetch-Site":     "same-origin",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/134.0.0.0 Safari/537.36"
+    ),
+}
 
 TERMINOS_BUSQUEDA = [
     "leche", "yogur", "queso", "mantequilla", "nata", "natillas", "flan",
@@ -41,358 +96,128 @@ TERMINOS_BUSQUEDA = [
     "comida perro", "comida gato",
 ]
 
-CATEGORIAS_MENU = [
-    ("/supermercado/frescos/c/sup01", "Frescos"),
-    ("/supermercado/lacteos-y-huevos/c/sup02", "Lácteos y Huevos"),
-    ("/supermercado/congelados/c/sup03", "Congelados"),
-    ("/supermercado/alimentacion/c/sup04", "Alimentación"),
-    ("/supermercado/bebidas/c/sup05", "Bebidas"),
-    ("/supermercado/drogueria-y-limpieza/c/sup06", "Droguería"),
-    ("/supermercado/perfumeria-e-higiene/c/sup07", "Perfumería"),
-    ("/supermercado/bebe/c/sup08", "Bebé"),
-    ("/supermercado/mascotas/c/sup09", "Mascotas"),
-    ("/supermercado/parafarmacia/c/sup10", "Parafarmacia"),
-]
+
+def _generar_shopper_id():
+    """Genera un ID de comprador anónimo aleatorio (28 chars alfanuméricos)."""
+    chars = string.ascii_letters + string.digits
+    return "".join(random.choices(chars, k=28))
 
 
-class _Acumulador:
-    """
-    Handler de red nombrado (no lambda) para poder registrarlo y
-    quitarlo con page.on / page.remove_listener sin errores.
-    """
-    def __init__(self):
-        self.datos = []
-
-    def handler(self, response):
-        url = response.url
-        if response.status != 200:
-            return
-        # API real de Carrefour (confirmada por inspección de red)
-        if "carrefour.es/search-api" in url:
-            try:
-                self.datos.append(response.json())
-            except Exception:
-                pass
-
-
-def _aceptar_cookies(page):
-    try:
-        btn = page.locator(
-            "#onetrust-accept-btn-handler, "
-            "button[title='Aceptar todas las cookies'], "
-            "button[class*='accept-all']"
-        ).first
-        if btn.is_visible(timeout=4000):
-            btn.click()
-            time.sleep(1.5)
-    except Exception:
-        pass
-
-
-def _parsear_respuesta(data, categoria_fallback=""):
-    """
-    Parsea la respuesta real de carrefour.es/search-api/query/v1/search.
-
-    Estructura confirmada:
-    {
-      "content": {
-        "docs": [
-          {
-            "display_name": "Leche semidesnatada Carrefour brik 1 l.",
-            "active_price": 0.88,
-            "product_id": "521007071",
-            "image_path": "https://static.carrefour.es/...",
-            "price_per_unit_text": "0,88 €/l",
-            "brand": "CARREFOUR",
-            "url": "/supermercado/leche-semidesnatada.../R-521007071/p",
-            "section": "15",
-            ...
-          }
-        ],
-        "numFound": 741
-      }
-    }
-    """
+def _parsear_docs(docs, categoria_fallback=""):
+    """Extrae productos de content.docs[] — estructura confirmada por inspección."""
     productos = []
-
-    if not isinstance(data, dict):
-        return productos
-
-    docs = []
-    content = data.get("content")
-    if isinstance(content, dict):
-        docs = content.get("docs") or []
-
-    # Fallback por si la estructura cambia
-    if not docs:
-        docs = data.get("docs") or data.get("results") or []
-
     for doc in docs:
         if not isinstance(doc, dict):
             continue
         try:
-            # Precio — campo confirmado: active_price
-            precio = None
-            for campo in ["active_price", "list_price", "app_price", "price"]:
-                val = doc.get(campo)
-                if val is not None:
-                    try:
-                        precio = float(val)
-                        if precio > 0:
-                            break
-                    except (ValueError, TypeError):
-                        continue
-
-            if not precio or precio <= 0:
+            precio = doc.get("active_price")
+            if precio is None or float(precio) <= 0:
                 continue
 
-            # ID — campo confirmado: product_id
-            id_prod = str(
-                doc.get("product_id") or doc.get("catalog_ref_id") or
-                doc.get("id") or doc.get("ean13") or ""
-            ).strip()
-            if not id_prod:
+            product_id = str(doc.get("product_id") or "").strip()
+            if not product_id:
                 continue
 
-            # Nombre — campo confirmado: display_name
-            nombre = (
-                doc.get("display_name") or doc.get("name") or doc.get("title") or ""
-            ).strip()
+            nombre = str(doc.get("display_name") or "").strip()
             if not nombre:
                 continue
 
-            # Precio por unidad — campo confirmado: price_per_unit_text
-            precio_unidad = str(doc.get("price_per_unit_text") or "").strip()
-
-            # Imagen — campo confirmado: image_path
-            imagen = str(doc.get("image_path") or "").strip()
-
-            # URL — campo confirmado: url (relativa)
             url_prod = str(doc.get("url") or "").strip()
             if url_prod and not url_prod.startswith("http"):
                 url_prod = BASE_URL + url_prod
 
-            # Categoría
-            categoria = str(
-                doc.get("section") or doc.get("category") or categoria_fallback
-            )
-
             productos.append({
-                "Id":            id_prod,
+                "Id":            product_id,
                 "Nombre":        nombre,
-                "Precio":        precio,
-                "Precio_unidad": precio_unidad,
-                "Categoria":     categoria,
+                "Precio":        float(precio),
+                "Precio_unidad": str(doc.get("price_per_unit_text") or "").strip(),
+                "Categoria":     str(doc.get("section") or categoria_fallback),
                 "Supermercado":  "Carrefour",
                 "URL":           url_prod,
-                "URL_imagen":    imagen,
+                "URL_imagen":    str(doc.get("image_path") or "").strip(),
             })
         except Exception:
             continue
-
     return productos
 
 
-def _fallback_dom(page, termino, ids_vistos):
-    """Extracción DOM de último recurso."""
+def _buscar_termino(session, termino, store, shopper_id, ids_vistos):
+    """Llama a la API paginando con start/rows hasta agotar resultados o _MAX_PAGINAS."""
     nuevos = []
-    try:
-        datos = page.evaluate("""
-            () => {
-                const results = [];
-                document.querySelectorAll(
-                    '[data-product-id],[data-pid],[data-ean],'
-                    'article[class*="product"],div[class*="ProductCard"]'
-                ).forEach(el => {
-                    const pid = el.dataset.productId || el.dataset.pid ||
-                                el.dataset.ean || el.dataset.id || '';
-                    const nameEl  = el.querySelector(
-                        '[class*="title"],[class*="name"],h2,h3');
-                    const priceEl = el.querySelector(
-                        '[class*="price--sale"],[itemprop="price"],[class*="current"]');
-                    const imgEl   = el.querySelector('img');
-                    if (pid && nameEl && priceEl) {
-                        results.push({
-                            id:    pid,
-                            name:  nameEl.innerText.trim(),
-                            price: priceEl.getAttribute('content') ||
-                                   priceEl.innerText.trim(),
-                            img:   imgEl ? (imgEl.src || imgEl.dataset.src || '') : '',
-                            url:   el.querySelector('a') ?
-                                   el.querySelector('a').href : ''
-                        });
-                    }
-                });
-                return results;
-            }
-        """)
-        for item in datos:
-            if not item["id"] or item["id"] in ids_vistos:
-                continue
-            try:
-                precio = float(
-                    re.sub(r"[^\d.,]", "", str(item["price"])).replace(",", ".")
+    for pagina in range(_MAX_PAGINAS):
+        params = {
+            **_PARAMS_FIJOS,
+            "store":     store,
+            "shopperId": shopper_id,
+            "query":     termino,
+            "start":     pagina * _ROWS,
+            "rows":      _ROWS,
+        }
+        try:
+            resp = session.get(_API_URL, params=params, timeout=15)
+            if resp.status_code != 200:
+                logger.warning(
+                    f"Carrefour '{termino}' pág {pagina + 1}: "
+                    f"HTTP {resp.status_code}"
                 )
-                if precio <= 0:
-                    continue
-                ids_vistos.add(item["id"])
-                nuevos.append({
-                    "Id":            str(item["id"]),
-                    "Nombre":        item["name"],
-                    "Precio":        precio,
-                    "Precio_unidad": "",
-                    "Categoria":     termino.capitalize(),
-                    "Supermercado":  "Carrefour",
-                    "URL":           item.get("url", ""),
-                    "URL_imagen":    item.get("img", ""),
-                })
-            except Exception:
-                continue
-    except Exception as e:
-        logger.debug(f"DOM fallback '{termino}': {e}")
-    return nuevos
+                break
+            data = resp.json()
+        except Exception as exc:
+            logger.warning(f"Carrefour '{termino}' pág {pagina + 1}: {exc}")
+            break
 
+        content = data.get("content")
+        docs = (content.get("docs") or []) if isinstance(content, dict) else []
 
-def _buscar_termino(page, termino, ids_vistos):
-    """
-    Navega a /?query=TERMINO (URL real confirmada) e intercepta
-    la respuesta de search-api con handler nombrado.
-    """
-    acum = _Acumulador()
-    page.on("response", acum.handler)
-    try:
-        # URL real: /?query=leche  (no /search?query=...&scope=supermarket)
-        url = f"{BASE_URL}/?query={termino.replace(' ', '+')}"
-        page.goto(url, wait_until="networkidle", timeout=35000)
-        time.sleep(1.5)
-        page.evaluate("window.scrollTo(0, 500)")
-        time.sleep(0.8)
-    except PlaywrightTimeoutError:
-        pass
-    except Exception as e:
-        logger.debug(f"Timeout/error buscando '{termino}': {e}")
-    finally:
-        page.remove_listener("response", acum.handler)
+        if not docs:
+            break
 
-    nuevos = []
-    for data in acum.datos:
-        for p in _parsear_respuesta(data, termino.capitalize()):
+        for p in _parsear_docs(docs, termino.capitalize()):
             if p["Id"] not in ids_vistos:
                 ids_vistos.add(p["Id"])
                 nuevos.append(p)
 
-    if not nuevos:
-        nuevos = _fallback_dom(page, termino, ids_vistos)
+        # Si la página vino incompleta no hay más resultados
+        if len(docs) < _ROWS:
+            break
+
+        time.sleep(0.3)  # pausa cortés entre páginas
 
     return nuevos
 
 
-def _navegar_categoria(page, url_cat, nombre_cat, ids_vistos):
-    """Navega una categoría con paginación."""
-    nuevos_total = []
-    for pagina in range(1, 16):
-        acum = _Acumulador()
-        page.on("response", acum.handler)
-        try:
-            sep = "&" if "?" in url_cat else "?"
-            url = (
-                f"{BASE_URL}{url_cat}"
-                if pagina == 1
-                else f"{BASE_URL}{url_cat}{sep}start={(pagina - 1) * 24}"
-            )
-            page.goto(url, wait_until="networkidle", timeout=30000)
-            time.sleep(1.2)
-        except PlaywrightTimeoutError:
-            pass
-        except Exception as e:
-            logger.debug(f"Error cat {url_cat} pág {pagina}: {e}")
-        finally:
-            page.remove_listener("response", acum.handler)
-
-        nuevos_pag = []
-        for data in acum.datos:
-            for p in _parsear_respuesta(data, nombre_cat):
-                if p["Id"] not in ids_vistos:
-                    ids_vistos.add(p["Id"])
-                    p["Categoria"] = nombre_cat
-                    nuevos_pag.append(p)
-
-        nuevos_total.extend(nuevos_pag)
-        if len(nuevos_pag) < 3:
-            break
-
-    return nuevos_total
-
-
 def gestion_carrefour():
-    import pandas as pd
+    """Punto de entrada principal. Devuelve DataFrame con todos los productos."""
+    load_dotenv()
     inicio = time.time()
-    logger.info("Iniciando extracción de Carrefour...")
+    logger.info("Iniciando extracción de Carrefour (API directa, sin Playwright)...")
 
-    todos = []
+    # store: ID de tienda Carrefour según código postal.
+    # 005290 corresponde a Madrid (CP 28001).
+    # Configurable como secreto CARREFOUR_STORE_ID en el Codespace.
+    store     = os.getenv("CARREFOUR_STORE_ID", "005290")
+    shopper_id = _generar_shopper_id()
+
+    session = requests.Session()
+    session.headers.update(_HEADERS)
+
+    todos     = []
     ids_vistos = set()
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-            ],
-        )
-        context = browser.new_context(
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
-            ),
-            viewport={"width": 1366, "height": 768},
-            locale="es-ES",
-            extra_http_headers={"Accept-Language": "es-ES,es;q=0.9"},
-        )
-        page = context.new_page()
-        page.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
-        )
+    for termino in TERMINOS_BUSQUEDA:
+        nuevos = _buscar_termino(session, termino, store, shopper_id, ids_vistos)
+        todos.extend(nuevos)
+        if nuevos:
+            logger.info(
+                f"  '{termino}' → {len(nuevos)} nuevos "
+                f"(total acumulado: {len(todos)})"
+            )
+        time.sleep(0.4)  # pausa entre términos
 
-        logger.info("Estableciendo sesión en carrefour.es...")
-        try:
-            page.goto(f"{BASE_URL}/supermercado/", wait_until="domcontentloaded", timeout=20000)
-            _aceptar_cookies(page)
-            time.sleep(2)
-        except Exception as e:
-            logger.warning(f"Error en visita inicial: {e}")
-
-        # Fase 1: búsqueda por términos
-        logger.info(f"Fase 1: búsqueda por {len(TERMINOS_BUSQUEDA)} términos...")
-        for termino in TERMINOS_BUSQUEDA:
-            nuevos = _buscar_termino(page, termino, ids_vistos)
-            todos.extend(nuevos)
-            if nuevos:
-                logger.info(f"  '{termino}' → {len(nuevos)} nuevos (total: {len(todos)})")
-            time.sleep(0.4)
-
-        logger.info(f"Fase 1 completada: {len(todos)} productos")
-
-        # Fase 2: navegación por categorías del menú
-        logger.info(f"Fase 2: navegando {len(CATEGORIAS_MENU)} categorías...")
-        for url_cat, nombre_cat in CATEGORIAS_MENU:
-            nuevos = _navegar_categoria(page, url_cat, nombre_cat, ids_vistos)
-            todos.extend(nuevos)
-            if nuevos:
-                logger.info(f"  '{nombre_cat}': {len(nuevos)} nuevos (total: {len(todos)})")
-
-        browser.close()
-
-    duracion = int(time.time() - inicio)
+    duracion = time.time() - inicio
     logger.info(
-        f"Carrefour completado: {len(todos)} productos en {duracion // 60}m {duracion % 60}s"
+        f"Carrefour completado: {len(todos)} productos "
+        f"en {duracion / 60:.1f} min"
     )
 
-    if not todos:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(todos)
-    df = df[df["Precio"] > 0].drop_duplicates(subset=["Id"])
-    return df
+    return pd.DataFrame(todos) if todos else pd.DataFrame()
