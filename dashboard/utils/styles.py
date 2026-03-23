@@ -16,7 +16,7 @@ COLORES_SUPERMERCADO = {
     'Alcampo':   '#F39C12',
     'Eroski':    '#9B59B6',
     'Consum':    '#E30613',
-    'Condis':    '#C0392B',
+    'Condis':    '#CC0000',
 }
 
 # Tokens de color del sistema
