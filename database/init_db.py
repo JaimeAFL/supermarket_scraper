@@ -22,9 +22,10 @@ def inicializar_base_datos(db_path: str = None) -> str:
     """Crea tablas e índices en PostgreSQL. db_path se ignora (compatibilidad)."""
 
     url = _get_database_url()
-    conn = psycopg2.connect(url, sslmode="require")
+    conn = psycopg2.connect(url, sslmode="require", connect_timeout=30)
     conn.autocommit = False
     cur = conn.cursor()
+    cur.execute("SET lock_timeout = '15s'")
 
     logger.info("Inicializando BD PostgreSQL...")
 
