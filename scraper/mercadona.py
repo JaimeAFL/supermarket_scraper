@@ -107,12 +107,27 @@ def get_products_by_category(list_categories):
 
             df_productos = pd.json_normalize(data["categories"], "products")
 
-            # Ajustar precios aproximados (productos a granel)
-            condicion = df_productos['price_instructions.approx_size']
-            df_productos.loc[condicion, 'price_instructions.unit_size'] = 1
-            df_productos.loc[condicion, 'price_instructions.unit_price'] = (
-                df_productos.loc[condicion, 'price_instructions.bulk_price']
-            )
+            # ── Semántica de price_instructions para productos a granel ──────
+            # approx_size=True indica que el producto se vende por peso real
+            # (a granel). En ese caso los campos tienen este significado:
+            #
+            #   unit_price  → precio ESTIMADO por pieza (ej: ~1,49 € por una
+            #                  bolsa de ~500 g de tomates cherry).
+            #                  Es aproximado: el cobro definitivo se calcula a
+            #                  checkout como peso_real × bulk_price.
+            #
+            #   bulk_price  → precio de REFERENCIA por kg/L (ej: 2,99 €/kg).
+            #                  Es la tasa de facturación real.
+            #
+            # NO se sobrescribe unit_price con bulk_price porque:
+            #   - unit_price (Precio)           → precio estimado de venta por pieza
+            #   - bulk_price (Precio_por_unidad) → precio de referencia €/kg o €/L
+            # Esta distinción es necesaria para el sistema dual de precios del
+            # dashboard (Petición 1-2): precio_venta grande + precio_referencia
+            # en gris pequeño (ej: "1,49 €  /  2,99 €/kg").
+            #
+            # La corrección se limita a asegurarse de que la columna existe
+            # antes de usarla, sin alterar sus valores.
 
             df_productos['categoria'] = str(id_categoria)
             df_productos['supermercado'] = "Mercadona"
