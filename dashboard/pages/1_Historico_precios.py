@@ -23,6 +23,7 @@ from dashboard.utils.components import (
     encabezado, fila_insights, estado_vacio,
     barra_filtros, añadir_a_cesta_rapido,
     obtener_url_producto, boton_consultar_web,
+    widget_añadir_a_lista,
 )
 
 st.set_page_config(page_title="Histórico de precios", page_icon="", layout="wide")
@@ -77,7 +78,8 @@ if filtros['busqueda']:
             precio_max = df_hist['precio'].max()
 
             # ── Botones: Favoritos / Cesta / Consultar web / Lista ─────
-            col_fav, col_cesta, col_web = st.columns(3)
+            # 4 columnas: las 3 acciones clásicas + botón popover de lista
+            col_fav, col_cesta, col_web, col_lista = st.columns(4)
 
             # Comprobar si ya está en favoritos
             df_favs = db.obtener_favoritos()
@@ -111,29 +113,10 @@ if filtros['busqueda']:
                 url_prod = obtener_url_producto(db, producto_id)
                 boton_consultar_web(url_prod, key_suffix="hist")
 
-            # Añadir a lista
-            df_listas_hist = db.obtener_listas()
-            if not df_listas_hist.empty:
-                opciones_listas_hist = {row['nombre']: int(row['id'])
-                                        for _, row in df_listas_hist.iterrows()}
-                col_ls, col_lb = st.columns([3, 1])
-                with col_ls:
-                    lista_hist_sel = st.selectbox(
-                        "Añadir a lista:",
-                        list(opciones_listas_hist.keys()),
-                        key="hist_lista_sel",
-                        label_visibility="collapsed")
-                with col_lb:
-                    if st.button("Añadir a lista", key="hist_lista_btn",
-                                  use_container_width=True):
-                        ok = db.añadir_producto_a_lista(
-                            opciones_listas_hist[lista_hist_sel], producto_id)
-                        if ok:
-                            st.success(f"Añadido a '{lista_hist_sel}'.")
-                        else:
-                            st.error("No se pudo añadir a la lista.")
-            else:
-                st.caption("Sin listas. Créalas en 'Mis listas'.")
+            with col_lista:
+                # Popover con selector de lista y cantidad
+                widget_añadir_a_lista(db, producto_id,
+                                      f"hist_{producto_id}")
 
             # ── Insight cards ─────────────────────────────────────
             insights = []

@@ -21,6 +21,7 @@ from dashboard.utils.components import (
     encabezado, fila_insights, estado_vacio,
     añadir_a_cesta_rapido,
     obtener_url_producto, boton_consultar_web,
+    widget_añadir_a_lista,
 )
 
 st.set_page_config(page_title="Comparador", page_icon="", layout="wide")
@@ -64,27 +65,6 @@ def _ids_favoritos_actuales():
     return set()
 
 
-def _widget_añadir_a_lista(producto_id, df_listas, key_suffix):
-    """Renderiza selectbox + botón para añadir un producto a una lista."""
-    if df_listas.empty:
-        st.caption("Sin listas. Créalas en 'Mis listas'.")
-        return
-    opciones = {row['nombre']: int(row['id'])
-                for _, row in df_listas.iterrows()}
-    col_s, col_b = st.columns([3, 1])
-    with col_s:
-        lista_sel = st.selectbox(
-            "Lista:", list(opciones.keys()),
-            key=f"lista_sel_{key_suffix}",
-            label_visibility="collapsed")
-    with col_b:
-        if st.button("Añadir a lista", key=f"lista_btn_{key_suffix}",
-                      use_container_width=True):
-            ok = db.añadir_producto_a_lista(opciones[lista_sel], producto_id)
-            if ok:
-                st.success(f"Añadido a '{lista_sel}'.")
-            else:
-                st.error("No se pudo añadir a la lista.")
 st.markdown(
     "Busca un producto y compara precios **unitarios** (€/L, €/kg) "
     "entre supermercados.")
@@ -341,7 +321,6 @@ if busqueda:
 
         if not df_filtrado.empty:
             ids_fav = _ids_favoritos_actuales()
-            df_listas_comp = db.obtener_listas()
 
             # Producto más barato
             if df_filtrado['precio_unitario'].notna().any():
@@ -385,7 +364,8 @@ if busqueda:
                               obtener_url_producto(db, id_barato))
                 boton_consultar_web(url_barato, key_suffix="comp_rapido")
 
-            _widget_añadir_a_lista(id_barato, df_listas_comp, "comp_rapido")
+            # Botón popover con selector de lista y cantidad
+            widget_añadir_a_lista(db, id_barato, f"comp_{id_barato}")
 
             # Selección manual
             st.markdown("")
@@ -438,4 +418,5 @@ if busqueda:
                     boton_consultar_web(url_manual,
                                         key_suffix="comp_manual")
 
-                _widget_añadir_a_lista(sel_id, df_listas_comp, "comp_manual")
+                # Botón popover con selector de lista y cantidad
+                widget_añadir_a_lista(db, sel_id, f"comp_{sel_id}")

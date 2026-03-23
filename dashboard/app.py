@@ -20,6 +20,7 @@ from dashboard.utils.styles import inyectar_estilos
 from dashboard.utils.components import (
     encabezado, fila_metricas, sidebar_branding,
     barra_filtros, estado_vacio,
+    widget_añadir_a_lista,
 )
 
 st.set_page_config(page_title="Supermarket Price Tracker", page_icon="",
@@ -93,42 +94,25 @@ if filtros['busqueda']:
                 st.dataframe(df_tipo[cols_mostrar],
                              use_container_width=True, hide_index=True)
 
-                # Añadir a lista
-                df_listas_home = db.obtener_listas()
-                if not df_listas_home.empty:
-                    opciones_prod_home = {
-                        f"{row['nombre']} ({row['supermercado']}) — "
-                        f"{row.get('precio', '?')} €": int(row['id'])
-                        for _, row in df_tipo.iterrows()
-                    }
-                    opciones_listas_home = {
-                        row['nombre']: int(row['id'])
-                        for _, row in df_listas_home.iterrows()
-                    }
-                    col_prod_h, col_lista_h, col_btn_h = st.columns([3, 2, 1])
-                    with col_prod_h:
-                        prod_home_sel = st.selectbox(
-                            "Producto:",
-                            list(opciones_prod_home.keys()),
-                            key="home_lista_prod_sel",
-                            label_visibility="collapsed")
-                    with col_lista_h:
-                        lista_home_sel = st.selectbox(
-                            "Lista:",
-                            list(opciones_listas_home.keys()),
-                            key="home_lista_sel",
-                            label_visibility="collapsed")
-                    with col_btn_h:
-                        if st.button("+ Lista", key="home_lista_btn",
-                                      use_container_width=True):
-                            ok = db.añadir_producto_a_lista(
-                                opciones_listas_home[lista_home_sel],
-                                opciones_prod_home[prod_home_sel])
-                            if ok:
-                                st.success(
-                                    f"Añadido a '{lista_home_sel}'.")
-                            else:
-                                st.error("No se pudo añadir a la lista.")
+                # Añadir a lista: selecciona producto y luego usa el popover
+                opciones_prod_home = {
+                    f"{row['nombre']} ({row['supermercado']}) — "
+                    f"{row.get('precio', '?')} €": int(row['id'])
+                    for _, row in df_tipo.iterrows()
+                }
+                col_prod_h, col_btn_h = st.columns([4, 1])
+                with col_prod_h:
+                    prod_home_sel = st.selectbox(
+                        "Producto:",
+                        list(opciones_prod_home.keys()),
+                        key="home_lista_prod_sel",
+                        label_visibility="collapsed")
+                with col_btn_h:
+                    prod_home_id = opciones_prod_home[prod_home_sel]
+                    # Botón popover con selector de lista y cantidad
+                    widget_añadir_a_lista(
+                        db, prod_home_id,
+                        f"home_{prod_home_id}")
 
             if not df_nombre.empty:
                 with st.expander(
