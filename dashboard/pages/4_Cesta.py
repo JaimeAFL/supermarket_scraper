@@ -464,14 +464,14 @@ if cesta:
     if 'ruta_cache' not in st.session_state:
         st.session_state['ruta_cache'] = {
             'direccion': None, 'tiendas': None, 'ruta': None,
-            'origen': None, 'supermercados': None,
+            'origen': None, 'supermercados': None, 'modo': None,
         }
 
     col_dir, col_modo, col_radio = st.columns([3, 1, 1])
     with col_dir:
         direccion_ruta = st.text_input(
             "Tu dirección o código postal:",
-            placeholder="Ej: Calle Mayor 1, Madrid / 28001",
+            placeholder="Ej: Calle Mayor 1, Madrid, 28001",
             key="ruta_direccion")
     with col_modo:
         modos = {"Coche": "driving", "A pie": "walking", "Bici": "cycling"}
@@ -533,13 +533,14 @@ if cesta:
                             "No se pudo calcular la ruta óptima. "
                             "Mostrando tiendas en el mapa sin ruta.")
 
-                # Guardar en cache
+                # Guardar en cache (incluye modo para detectar cambios)
                 st.session_state['ruta_cache'] = {
                     'direccion': direccion_ruta.strip(),
                     'origen': origen,
                     'tiendas': tiendas_encontradas,
                     'ruta': ruta_datos,
                     'supermercados': supermercados_cesta,
+                    'modo': modos[modo_sel],
                 }
 
     # ── Renderizar mapa y resultados desde cache ──
@@ -548,6 +549,17 @@ if cesta:
         origen = cache['origen']
         tiendas_encontradas = cache['tiendas']
         ruta_datos = cache['ruta']
+
+        # Avisar si el modo seleccionado no coincide con el de la ruta mostrada
+        modo_cache = cache.get('modo')
+        modo_actual = modos[modo_sel]
+        if modo_cache and modo_cache != modo_actual:
+            nombres_modo = {v: k for k, v in modos.items()}
+            st.warning(
+                f"La ruta mostrada fue calculada en modo "
+                f"**{nombres_modo.get(modo_cache, modo_cache)}**. "
+                f"Pulsa **Calcular ruta** para actualizarla en modo "
+                f"**{modo_sel}**.")
 
         st.markdown(
             f"Ubicación: **{origen.get('display_name', cache['direccion'])}**")
