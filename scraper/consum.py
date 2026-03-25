@@ -191,7 +191,7 @@ def _mapear_producto(prod: dict) -> dict | None:
         return None
 
     # ── Precio — preferir oferta si existe ───────────────────────────────────
-    precios = {p["id"]: p["value"] for p in price_data.get("prices", []) if "id" in p}
+    precios = {p["id"]: p["value"] for p in price_data.get("prices", []) if "id" in p and "value" in p}
 
     valor = precios.get("OFFER_PRICE") or precios.get("PRICE")
     if not valor:

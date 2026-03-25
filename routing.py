@@ -151,9 +151,9 @@ def buscar_supermercados_cercanos(
 
     for elemento in datos.get("elements", []):
         # Obtener coordenadas (center para ways, directo para nodes)
-        e_lat = elemento.get("lat") or elemento.get("center", {}).get("lat")
-        e_lon = elemento.get("lon") or elemento.get("center", {}).get("lon")
-        if not e_lat or not e_lon:
+        e_lat = elemento.get("lat") if elemento.get("lat") is not None else elemento.get("center", {}).get("lat")
+        e_lon = elemento.get("lon") if elemento.get("lon") is not None else elemento.get("center", {}).get("lon")
+        if e_lat is None or e_lon is None:
             continue
 
         nombre_osm = elemento.get("tags", {}).get("name", "")
@@ -167,8 +167,12 @@ def buscar_supermercados_cercanos(
         # Identificar a qué supermercado pertenece
         for super_nombre in supermercados:
             nombres_osm_validos = NOMBRES_OSM.get(super_nombre, [super_nombre])
-            if any(nombre_osm.lower().startswith(n.lower().replace("%", ""))
-                   for n in nombres_osm_validos):
+            nombre_osm_lower = nombre_osm.lower()
+            if any(
+                nombre_osm_lower == n.lower().replace("%", "").strip() or
+                nombre_osm_lower.startswith(n.lower().replace("%", "").strip() + " ")
+                for n in nombres_osm_validos
+            ):
                 dist = _distancia_haversine(lat, lon, e_lat, e_lon)
                 resultados[super_nombre].append({
                     "lat": e_lat,

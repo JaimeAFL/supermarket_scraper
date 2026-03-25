@@ -132,12 +132,17 @@ def inicializar_base_datos(db_path: str = None) -> str:
         ON CONFLICT (supermercado) DO NOTHING
     """)
 
-    # ── Columnas nuevas (idempotente para BDs ya existentes) ─────────
+    # ── Columnas nuevas (solo si no existen, evita locks concurrentes) ──
     cur.execute("""
-        ALTER TABLE precios
-            ADD COLUMN IF NOT EXISTS precio_referencia REAL,
-            ADD COLUMN IF NOT EXISTS unidad_referencia TEXT DEFAULT ''
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'precios'
+          AND column_name IN ('precio_referencia', 'unidad_referencia')
     """)
+    existing_cols = {row[0] for row in cur.fetchall()}
+    if 'precio_referencia' not in existing_cols:
+        cur.execute("ALTER TABLE precios ADD COLUMN precio_referencia REAL")
+    if 'unidad_referencia' not in existing_cols:
+        cur.execute("ALTER TABLE precios ADD COLUMN unidad_referencia TEXT DEFAULT ''")
 
     # ── Índices ───────────────────────────────────────────────────────
     indices = [

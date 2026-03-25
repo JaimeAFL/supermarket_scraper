@@ -122,18 +122,19 @@ class DatabaseManager:
                         nombre_normalizado    = EXCLUDED.nombre_normalizado,
                         categoria_normalizada = EXCLUDED.categoria_normalizada,
                         formato_normalizado   = EXCLUDED.formato_normalizado
+                    RETURNING id, (xmax = 0) AS is_new
                 """, (id_externo, nombre, supermercado, categoria, formato,
                       url, url_imagen, ts, ts,
                       tipo_producto, marca, nombre_normalizado,
                       categoria_normalizada, formato_normalizado))
-                nuevos += cur.rowcount > 0
-
-                cur.execute(
-                    "SELECT id FROM productos "
-                    "WHERE id_externo=%s AND supermercado=%s",
-                    (id_externo, supermercado),
-                )
-                prod_id = cur.fetchone()["id"]
+                upsert_result = cur.fetchone()
+                if not upsert_result:
+                    continue
+                prod_id = upsert_result["id"]
+                if upsert_result["is_new"]:
+                    nuevos += 1
+                else:
+                    actualizados += 1
 
                 # ── Calcular precio de referencia ─────────────────────
                 precio_ref = None
