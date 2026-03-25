@@ -6,6 +6,7 @@ enlaces mailto: para que el usuario se envíe la lista desde
 su propio correo (sin necesidad de servidor SMTP).
 """
 
+import logging
 import os
 import tempfile
 import urllib.request as _urllib
@@ -13,6 +14,8 @@ from datetime import datetime
 from urllib.parse import quote
 
 from fpdf import FPDF
+
+logger = logging.getLogger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -42,7 +45,8 @@ def _fetch_img_temp(url):
         with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
             f.write(data)
             return f.name
-    except Exception:
+    except Exception as e:
+        logger.debug("No se pudo descargar imagen %s: %s", url, e)
         return None
 
 

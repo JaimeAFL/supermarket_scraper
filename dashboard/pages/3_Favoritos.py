@@ -11,9 +11,12 @@ _DB_PATH = os.environ.get(
     "SUPERMARKET_DB_PATH",
     os.path.join(_PROJECT_ROOT, "database", "supermercados.db"))
 
+import logging
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 from database.database_db_manager import DatabaseManager
 from database.init_db import inicializar_base_datos
 from dashboard.utils.styles import inyectar_estilos, COLORES_SUPERMERCADO
@@ -142,7 +145,8 @@ def _generar_pdf_favoritos(df_enriquecido):
             with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
                 f.write(data)
                 return f.name
-        except Exception:
+        except Exception as e:
+            logger.debug("No se pudo descargar imagen %s: %s", url, e)
             return None
 
     pdf = FPDF()

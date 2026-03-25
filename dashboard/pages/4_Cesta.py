@@ -196,15 +196,15 @@ def _optimizar_toda_la_cesta(db):
 
 def _calcular_totales(cesta):
     """Calcula métricas de la cesta."""
-    total = sum(i['precio'] * i['cantidad'] for i in cesta)
+    total = round(sum(i['precio'] * i['cantidad'] for i in cesta), 2)
     n_items = sum(i['cantidad'] for i in cesta)
-    ahorro = sum(
+    ahorro = round(sum(
         (i['precio'] - i['alternativa_precio']) * i['cantidad']
         for i in cesta
         if i.get('alternativa_precio') is not None
         and i['alternativa_precio'] < i['precio']
-    )
-    optimizado = total - ahorro
+    ), 2)
+    optimizado = round(total - ahorro, 2)
     return {
         'total': total,
         'n_items': n_items,
