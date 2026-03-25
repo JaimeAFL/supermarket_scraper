@@ -168,9 +168,14 @@ def buscar_supermercados_cercanos(
         for super_nombre in supermercados:
             nombres_osm_validos = NOMBRES_OSM.get(super_nombre, [super_nombre])
             nombre_osm_lower = nombre_osm.lower()
+            def _coincide(nombre_lower, prefijo):
+                """True si nombre empieza por prefijo con word boundary."""
+                if not nombre_lower.startswith(prefijo):
+                    return False
+                resto = nombre_lower[len(prefijo):]
+                return not resto or not resto[0].isalpha()
             if any(
-                nombre_osm_lower == n.lower().replace("%", "").strip() or
-                nombre_osm_lower.startswith(n.lower().replace("%", "").strip() + " ")
+                _coincide(nombre_osm_lower, n.lower().replace("%", "").strip())
                 for n in nombres_osm_validos
             ):
                 dist = _distancia_haversine(lat, lon, e_lat, e_lon)
