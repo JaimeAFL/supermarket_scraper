@@ -197,7 +197,7 @@ print(row_n)
 # ── 4. Ranking final ───────────────────────────────────────────────────
 print()
 print(SEP)
-print("4. RANKING FINAL — cesta básica INE (precio mínimo)")
+print("4. RANKING FINAL — cesta básica (precio mínimo)")
 print(SEP)
 ranking = sorted([(s, totales[s]) for s in supers if totales[s] > 0], key=lambda x: x[1])
 for i, (s, t) in enumerate(ranking, 1):
