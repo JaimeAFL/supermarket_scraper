@@ -69,23 +69,24 @@ CESTA_INE = {
     'Leche semidesnatada 1L':   [('leche semidesnatada', 0, 4)],
 
     # ── Huevos ────────────────────────────────────────────────────────
-    'Huevos 12 ud':             [('huevos', 0, 10)],
+    # min 1.50€ para excluir huevos sueltos o medias docenas
+    'Huevos 12 ud':             [('huevos', 1.50, 10)],
 
     # ── Carne de ave ──────────────────────────────────────────────────
-    'Pechuga de pollo':         [('pechuga de pollo', 0, 15), ('pechuga pollo', 0, 15)],
-    'Pollo entero':             [('pollo entero', 0, 15)],
+    'Pechuga de pollo':         [('pechuga de pollo', 1.50, 15), ('pechuga pollo', 1.50, 15)],
+    'Pollo entero':             [('pollo entero', 2.50, 15)],
 
     # ── Carne de vacuno ───────────────────────────────────────────────
-    'Carne picada vacuno':      [('carne picada', 0, 15)],
+    'Carne picada vacuno':      [('carne picada', 1.50, 15)],
 
     # ── Carne de porcino ──────────────────────────────────────────────
-    'Lomo de cerdo':            [('lomo de cerdo', 0, 15), ('lomo cerdo', 0, 15)],
-    'Chuletas de cerdo':        [('chuleta de cerdo', 0, 15), ('chuletas cerdo', 0, 15)],
+    # min 3€ para excluir precios por 100g
+    'Lomo de cerdo':            [('lomo de cerdo', 3.00, 15), ('lomo cerdo', 3.00, 15)],
 
     # ── Pescado ───────────────────────────────────────────────────────
-    'Merluza':                  [('merluza', 0, 25)],
+    'Merluza':                  [('merluza', 1.50, 25)],
     'Atún/bonito (lata)':       [('atún en aceite', 0, 10), ('bonito en aceite', 0, 10)],
-    'Salmón':                   [('salmón', 0, 25)],
+    # Salmón eliminado: precio muy variable (por lonja vs pieza), no comparable
 
     # ── Frutas frescas ────────────────────────────────────────────────
     'Manzana':                  [('manzana', 0, 10)],
