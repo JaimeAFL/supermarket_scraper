@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""Análisis de precios para post: ¿Cuál es el supermercado más barato de España?"""
+"""
+Análisis: ¿Cuál es el supermercado más barato de España para la compra básica?
+Cesta basada en las categorías de mayor gasto del INE (IPCA España).
+"""
 
 import os
 import psycopg2
 import psycopg2.extras
+from collections import defaultdict
 
 url = os.environ.get("DATABASE_URL", "")
 if not url:
@@ -12,215 +16,226 @@ if not url:
 conn = psycopg2.connect(url, connect_timeout=15)
 cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-SEP = "=" * 60
+SEP = "=" * 70
 
-# ── 1. Visión general ──────────────────────────────────────────
+# ── 1. Visión general ──────────────────────────────────────────────────
 print(SEP)
-print("1. PRODUCTOS POR SUPERMERCADO")
+print("1. PRODUCTOS EN BD POR SUPERMERCADO")
 print(SEP)
 cur.execute("""
-    SELECT supermercado, COUNT(*) as n_productos
+    SELECT supermercado, COUNT(*) as n
     FROM productos
-    GROUP BY supermercado
-    ORDER BY n_productos DESC
+    GROUP BY supermercado ORDER BY n DESC
 """)
 for r in cur.fetchall():
-    print(f"  {r['supermercado']:15} {r['n_productos']:>6} productos")
+    print(f"  {r['supermercado']:15} {r['n']:>6} productos")
 
-# ── 2. Precio más reciente por producto ───────────────────────
+# ── 2. Ranking global por mediana ──────────────────────────────────────
 print()
 print(SEP)
-print("2. PRECIO MEDIANO Y MEDIO (último precio de cada producto)")
+print("2. RANKING GLOBAL — mediana del último precio de cada producto")
 print(SEP)
 cur.execute("""
-    WITH ultimo_precio AS (
-        SELECT DISTINCT ON (producto_id)
-            producto_id,
-            precio
-        FROM precios
-        ORDER BY producto_id, fecha_captura DESC
+    WITH ultimo AS (
+        SELECT DISTINCT ON (producto_id) producto_id, precio
+        FROM precios ORDER BY producto_id, fecha_captura DESC
     )
     SELECT
         p.supermercado,
         COUNT(*)                            AS n,
-        ROUND(AVG(up.precio)::numeric, 2)   AS media,
-        ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY up.precio)::numeric, 2) AS mediana,
-        ROUND(MIN(up.precio)::numeric, 2)   AS min,
-        ROUND(MAX(up.precio)::numeric, 2)   AS max,
-        ROUND(PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY up.precio)::numeric, 2) AS p25,
-        ROUND(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY up.precio)::numeric, 2) AS p75
-    FROM ultimo_precio up
-    JOIN productos p ON p.id = up.producto_id
+        ROUND(AVG(u.precio)::numeric, 2)    AS media,
+        ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY u.precio)::numeric, 2) AS mediana,
+        ROUND(PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY u.precio)::numeric, 2) AS p25,
+        ROUND(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY u.precio)::numeric, 2) AS p75
+    FROM ultimo u
+    JOIN productos p ON p.id = u.producto_id
+    WHERE u.precio > 0
     GROUP BY p.supermercado
     ORDER BY mediana ASC
 """)
-rows = cur.fetchall()
-print(f"  {'Super':15} {'N':>6} {'Media':>7} {'Mediana':>8} {'P25':>7} {'P75':>7} {'Min':>6} {'Max':>7}")
-print("  " + "-"*65)
-for r in rows:
-    print(f"  {r['supermercado']:15} {r['n']:>6} {r['media']:>7} {r['mediana']:>8} {r['p25']:>7} {r['p75']:>7} {r['min']:>6} {r['max']:>7}")
+print(f"  {'Super':15} {'N':>6}  {'Mediana':>8}  {'Media':>7}  {'P25':>6}  {'P75':>6}")
+print("  " + "-" * 55)
+for r in cur.fetchall():
+    print(f"  {r['supermercado']:15} {r['n']:>6}  {r['mediana']:>8}  {r['media']:>7}  {r['p25']:>6}  {r['p75']:>6}")
 
-# ── 3. Cesta básica normalizada ───────────────────────────────
-print()
-print(SEP)
-print("3. CESTA BÁSICA — precio mínimo disponible por producto")
-print(SEP)
+# ── 3. Cesta INE ───────────────────────────────────────────────────────
+# Basada en las categorías de mayor gasto del INE para hogares españoles.
+# Por cada categoría se usan varios keywords: el primero que dé hits es el usado.
+# Se toma el precio mínimo disponible (la opción más barata en cada super).
 
-cesta = {
-    'Leche entera 1L':          'leche entera',
-    'Leche semidesnatada 1L':   'leche semidesnatada',
-    'Aceite oliva virgen extra': 'aceite de oliva virgen extra',
-    'Aceite girasol 1L':        'aceite girasol',
-    'Arroz 1kg':                'arroz',
-    'Pasta':                    'macarr',
-    'Harina 1kg':               'harina de trigo',
-    'Azúcar 1kg':               'azúcar',
-    'Sal':                      'sal fina',
-    'Huevos 12ud':              'huevos',
-    'Mantequilla':              'mantequilla',
-    'Yogur natural':            'yogur natural',
-    'Tomate frito':             'tomate frito',
-    'Tomate triturado':         'tomate triturado',
-    'Lentejas':                 'lentejas',
-    'Garbanzos':                'garbanzos',
-    'Pan de molde':             'pan de molde',
-    'Papel higiénico':          'papel higién',
-    'Detergente lavadora':      'detergente',
-    'Lejía':                    'lejía',
-    'Cerveza lata':             'cerveza',
-    'Agua mineral 1.5L':        'agua mineral',
-    'Patatas fritas':           'patatas fritas',
-    'Atún en aceite':           'atún en aceite',
-    'Galletas':                 'galletas',
+CESTA_INE = {
+    # ── Lácteos ───────────────────────────────────────────────────────
+    'Leche entera 1L':          [('leche entera', 0, 4)],
+    'Leche semidesnatada 1L':   [('leche semidesnatada', 0, 4)],
+
+    # ── Huevos ────────────────────────────────────────────────────────
+    'Huevos 12 ud':             [('huevos', 0, 10)],
+
+    # ── Carne de ave ──────────────────────────────────────────────────
+    'Pechuga de pollo':         [('pechuga de pollo', 0, 15), ('pechuga pollo', 0, 15)],
+    'Pollo entero':             [('pollo entero', 0, 15)],
+
+    # ── Carne de vacuno ───────────────────────────────────────────────
+    'Carne picada vacuno':      [('carne picada', 0, 15)],
+
+    # ── Carne de porcino ──────────────────────────────────────────────
+    'Lomo de cerdo':            [('lomo de cerdo', 0, 15), ('lomo cerdo', 0, 15)],
+    'Chuletas de cerdo':        [('chuleta de cerdo', 0, 15), ('chuletas cerdo', 0, 15)],
+
+    # ── Pescado ───────────────────────────────────────────────────────
+    'Merluza':                  [('merluza', 0, 25)],
+    'Atún/bonito (lata)':       [('atún en aceite', 0, 10), ('bonito en aceite', 0, 10)],
+    'Salmón':                   [('salmón', 0, 25)],
+
+    # ── Frutas frescas ────────────────────────────────────────────────
+    'Manzana':                  [('manzana', 0, 10)],
+    'Naranja':                  [('naranja', 0, 10)],
+    'Plátano':                  [('plátano', 0, 10), ('platano', 0, 10)],
+
+    # ── Hortalizas y legumbres ────────────────────────────────────────
+    'Tomate':                   [('tomate', 0, 8)],
+    'Lechuga':                  [('lechuga', 0, 5)],
+    'Cebolla':                  [('cebolla', 0, 5)],
+    'Zanahoria':                [('zanahoria', 0, 5)],
+    'Patatas (bolsa)':          [('patatas', 0, 8)],
+    'Lentejas':                 [('lentejas', 0, 5)],
+    'Garbanzos':                [('garbanzos', 0, 5)],
+
+    # ── Cereales y féculas ────────────────────────────────────────────
+    'Arroz 1kg':                [('arroz', 0, 5)],
+    'Pan de molde':             [('pan de molde', 0, 5)],
+    'Pasta (espagueti/macarrón)':[('espagueti', 0, 5), ('macarr', 0, 5)],
+
+    # ── Aceite ────────────────────────────────────────────────────────
+    'Aceite de oliva virgen':   [('aceite de oliva virgen extra', 0, 15), ('aceite oliva virgen extra', 0, 15)],
+    'Aceite de girasol':        [('aceite de girasol', 0, 10), ('aceite girasol', 0, 10)],
+
+    # ── Limpieza del hogar ────────────────────────────────────────────
+    'Detergente lavadora':      [('detergente', 0, 25)],
+    'Limpiahogar multiusos':    [('multiusos', 0, 10), ('limpiahogar', 0, 10)],
+    'Lejía':                    [('lejía', 0, 5), ('lejia', 0, 5)],
+    'Papel higiénico':          [('papel higiénico', 0, 15), ('papel higienico', 0, 15)],
+    'Bolsas de basura':         [('bolsas de basura', 0, 10), ('bolsas basura', 0, 10)],
+    'Papel de cocina':          [('papel de cocina', 0, 10), ('papel cocina', 0, 10)],
+
+    # ── Higiene y cosmética ───────────────────────────────────────────
+    'Champú':                   [('champú', 0, 10), ('champu', 0, 10)],
+    'Gel de ducha':             [('gel de ducha', 0, 8), ('gel ducha', 0, 8)],
+    'Pasta de dientes':         [('pasta de dientes', 0, 8), ('dentífrico', 0, 8)],
+    'Desodorante':              [('desodorante', 0, 8)],
 }
 
-cur.execute("""
-    WITH ultimo_precio AS (
-        SELECT DISTINCT ON (producto_id)
-            producto_id, precio
-        FROM precios
-        ORDER BY producto_id, fecha_captura DESC
-    )
-    SELECT
-        p.supermercado,
-        LOWER(p.nombre) AS nombre,
-        up.precio
-    FROM ultimo_precio up
-    JOIN productos p ON p.id = up.producto_id
-    WHERE up.precio > 0 AND up.precio <= 50
-""")
-all_prods = cur.fetchall()
+print()
+print(SEP)
+print("3. CESTA BÁSICA INE — precio mínimo disponible por producto (€)")
+print(SEP)
 
-from collections import defaultdict
-# Agrupar por supermercado
+# Cargar todos los últimos precios
+cur.execute("""
+    WITH ultimo AS (
+        SELECT DISTINCT ON (producto_id) producto_id, precio
+        FROM precios ORDER BY producto_id, fecha_captura DESC
+    )
+    SELECT p.supermercado, LOWER(p.nombre) AS nombre, u.precio
+    FROM ultimo u
+    JOIN productos p ON p.id = u.producto_id
+    WHERE u.precio > 0
+""")
+all_rows = cur.fetchall()
+
 by_super = defaultdict(list)
-for r in all_prods:
+for r in all_rows:
     by_super[r['supermercado']].append((r['nombre'], float(r['precio'])))
 
 supers = sorted(by_super.keys())
-totales = defaultdict(float)
-n_encontrados = defaultdict(int)
 
-print(f"  {'Producto':30}", end="")
-for s in supers:
-    print(f"  {s[:10]:>10}", end="")
-print()
-print("  " + "-" * (30 + 12 * len(supers)))
+totales      = defaultdict(float)
+n_enc        = defaultdict(int)
+detalle      = {}   # detalle[producto][super] = precio
 
-for label, kw in cesta.items():
-    print(f"  {label:30}", end="")
+for label, variantes in CESTA_INE.items():
+    detalle[label] = {}
     for s in supers:
-        hits = [precio for nombre, precio in by_super[s] if kw.lower() in nombre]
-        if hits:
-            p = min(hits)
-            totales[s] += p
-            n_encontrados[s] += 1
-            print(f"  {p:>10.2f}", end="")
+        for (kw, pmin, pmax) in variantes:
+            hits = [
+                precio for nombre, precio in by_super[s]
+                if kw.lower() in nombre and pmin <= precio <= pmax
+            ]
+            if hits:
+                p = min(hits)
+                detalle[label][s] = p
+                totales[s] += p
+                n_enc[s] += 1
+                break
+
+# Imprimir tabla
+header = f"  {'Producto':32}"
+for s in supers:
+    header += f"  {s[:10]:>10}"
+print(header)
+print("  " + "-" * (32 + 12 * len(supers)))
+
+for label in CESTA_INE:
+    row = f"  {label:32}"
+    for s in supers:
+        if s in detalle[label]:
+            row += f"  {detalle[label][s]:>10.2f}"
         else:
-            print(f"  {'—':>10}", end="")
-    print()
+            row += f"  {'—':>10}"
+    print(row)
 
-print()
-print(f"  {'TOTAL CESTA':30}", end="")
+print("  " + "-" * (32 + 12 * len(supers)))
+row_total = f"  {'TOTAL CESTA':32}"
+row_n     = f"  {'Nº productos encontrados':32}"
 for s in supers:
-    print(f"  {totales[s]:>10.2f}", end="")
-print()
-print(f"  {'Nº productos encontrados':30}", end="")
-for s in supers:
-    print(f"  {n_encontrados[s]:>10}", end="")
-print()
+    row_total += f"  {totales[s]:>10.2f}"
+    row_n     += f"  {n_enc[s]:>10}"
+print(row_total)
+print(row_n)
 
-# ── 4. Ranking final ──────────────────────────────────────────
+# ── 4. Ranking final ───────────────────────────────────────────────────
 print()
 print(SEP)
-print("4. RANKING FINAL (cesta básica, precio mínimo)")
+print("4. RANKING FINAL — cesta básica INE (precio mínimo)")
 print(SEP)
-ranking = sorted(totales.items(), key=lambda x: x[1])
+ranking = sorted([(s, totales[s]) for s in supers if totales[s] > 0], key=lambda x: x[1])
 for i, (s, t) in enumerate(ranking, 1):
-    print(f"  {i}. {s:15} {t:.2f}€")
+    print(f"  {i}. {s:15} {t:.2f}€  ({n_enc[s]} productos)")
 
-mas_barato = ranking[0]
-mas_caro   = ranking[-1]
-diff = mas_caro[1] - mas_barato[1]
-print(f"\n  Diferencia {mas_caro[0]} vs {mas_barato[0]}: {diff:.2f}€ por compra")
-print(f"  Anualizado (compra semanal): {diff * 52:.0f}€/año")
+if len(ranking) >= 2:
+    mas_barato = ranking[0]
+    mas_caro   = ranking[-1]
+    diff = mas_caro[1] - mas_barato[1]
+    print(f"\n  {mas_caro[0]} vs {mas_barato[0]}: {diff:.2f}€ más caro por compra")
+    print(f"  Diferencia anualizada (1 compra/semana): {diff * 52:.0f}€/año")
 
-# ── 5. Por categoría normalizada ─────────────────────────────
+# ── 5. Quién gana en cada categoría ───────────────────────────────────
 print()
 print(SEP)
-print("5. MEDIANA POR CATEGORÍA NORMALIZADA (top categorías)")
+print("5. GANADOR POR PRODUCTO (supermercado más barato)")
 print(SEP)
-cur.execute("""
-    WITH ultimo_precio AS (
-        SELECT DISTINCT ON (producto_id)
-            producto_id, precio
-        FROM precios
-        ORDER BY producto_id, fecha_captura DESC
-    )
-    SELECT
-        p.supermercado,
-        p.categoria_normalizada,
-        COUNT(*) as n,
-        ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY up.precio)::numeric, 2) AS mediana
-    FROM ultimo_precio up
-    JOIN productos p ON p.id = up.producto_id
-    WHERE p.categoria_normalizada != ''
-      AND up.precio > 0 AND up.precio <= 50
-    GROUP BY p.supermercado, p.categoria_normalizada
-    HAVING COUNT(*) >= 5
-    ORDER BY p.categoria_normalizada, mediana
-""")
-cat_rows = cur.fetchall()
-
-# Pivotar
-from collections import defaultdict
-cat_data = defaultdict(dict)
-for r in cat_rows:
-    cat_data[r['categoria_normalizada']][r['supermercado']] = (float(r['mediana']), r['n'])
-
-# Solo cats presentes en al menos 3 supers
-cats_comunes = {c: d for c, d in cat_data.items() if len(d) >= 3}
-print(f"  Categorías con datos en ≥3 supers: {len(cats_comunes)}")
-print()
-
-# Ganador por categoría
 ganadores = defaultdict(int)
-print(f"  {'Categoría':25} {'Ganador':15} {'Precio':>7}  (resto)")
-print("  " + "-"*70)
-for cat, datos in sorted(cats_comunes.items()):
-    ganador = min(datos.items(), key=lambda x: x[1][0])
-    resto = {s: v[0] for s, v in datos.items() if s != ganador[0]}
-    resto_str = "  ".join(f"{s[:5]}:{v:.2f}" for s, v in sorted(resto.items(), key=lambda x: x[1]))
-    print(f"  {cat:25} {ganador[0]:15} {ganador[1][0]:>7.2f}  {resto_str}")
-    ganadores[ganador[0]] += 1
+print(f"  {'Producto':32}  {'Ganador':15}  {'Precio':>7}  {'2º':>7}  {'Ahorro':>7}")
+print("  " + "-" * 75)
+for label in CESTA_INE:
+    d = detalle[label]
+    if len(d) < 2:
+        continue
+    orden = sorted(d.items(), key=lambda x: x[1])
+    g_s, g_p = orden[0]
+    s2, p2    = orden[1]
+    ahorro    = p2 - g_p
+    ganadores[g_s] += 1
+    print(f"  {label:32}  {g_s:15}  {g_p:>7.2f}  {p2:>7.2f}  {ahorro:>+7.2f}")
 
 print()
 print(SEP)
-print("6. VICTORIAS POR CATEGORÍA")
+print("6. VICTORIAS POR SUPERMERCADO (en cuántos productos es el más barato)")
 print(SEP)
 for s, n in sorted(ganadores.items(), key=lambda x: -x[1]):
-    print(f"  {s:15} gana en {n} categorías")
+    bar = "█" * n
+    print(f"  {s:15}  {n:>3} victorias  {bar}")
 
 conn.close()
 print()
-print("✓ Análisis completo")
+print("✓ Análisis completado")
