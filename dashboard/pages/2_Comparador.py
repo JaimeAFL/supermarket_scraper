@@ -365,7 +365,7 @@ if busqueda:
                 boton_consultar_web(url_barato, key_suffix="comp_rapido")
 
             # Botón popover con selector de lista y cantidad
-            widget_añadir_a_lista(db, id_barato, f"comp_{id_barato}")
+            widget_añadir_a_lista(db, id_barato, f"comp_barato_{id_barato}")
 
             # Selección manual
             st.markdown("")
@@ -419,4 +419,4 @@ if busqueda:
                                         key_suffix="comp_manual")
 
                 # Botón popover con selector de lista y cantidad
-                widget_añadir_a_lista(db, sel_id, f"comp_{sel_id}")
+                widget_añadir_a_lista(db, sel_id, f"comp_manual_{sel_id}")
