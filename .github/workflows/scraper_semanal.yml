@@ -5,13 +5,19 @@ on:
     # Lunes a las 7:00 AM hora España (UTC+1 invierno / UTC+2 verano)
     - cron: '0 6 * * 1'
   workflow_dispatch:
+    # Permite elegir qué scrapers ejecutar manualmente
+    inputs:
+      scrapers:
+        description: 'Scrapers a ejecutar (separados por coma, o "todos")'
+        required: false
+        default: 'todos'
+        type: string
 
 # ─────────────────────────────────────────────────────────────
 # Cada scraper corre en PARALELO como job independiente.
 # Así Eroski (62 min) no bloquea a Mercadona (21 seg).
 # Si uno falla, los demás siguen y se guardan sus datos.
-# Los resultados se importan directamente a PostgreSQL (Aiden).
-# No se hace commit de base de datos al repositorio.
+# Los resultados se importan directamente a PostgreSQL (Aiven).
 # ─────────────────────────────────────────────────────────────
 
 jobs:
@@ -21,6 +27,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     continue-on-error: true
+    if: >-
+      github.event_name == 'schedule' ||
+      contains(github.event.inputs.scrapers, 'mercadona') ||
+      github.event.inputs.scrapers == 'todos' ||
+      github.event.inputs.scrapers == ''
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -37,11 +48,46 @@ jobs:
           path: export/mercadona.csv
           retention-days: 3
 
+  # ── CARREFOUR (API directa, sin Playwright) ──────────────────
+  carrefour:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    continue-on-error: true
+    if: >-
+      github.event_name == 'schedule' ||
+      contains(github.event.inputs.scrapers, 'carrefour') ||
+      github.event.inputs.scrapers == 'todos' ||
+      github.event.inputs.scrapers == ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+      - name: Configurar .env
+        run: |
+          echo "CODIGO_POSTAL=${{ secrets.CODIGO_POSTAL }}" >> .env
+      - name: Ejecutar Carrefour
+        run: python run_scraper.py carrefour --export-csv export/carrefour.csv --skip-db
+        timeout-minutes: 20
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: carrefour
+          path: export/carrefour.csv
+          retention-days: 3
+
   # ── DIA (API + cookie con Playwright) ────────────────────────
   dia:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     continue-on-error: true
+    if: >-
+      github.event_name == 'schedule' ||
+      contains(github.event.inputs.scrapers, 'dia') ||
+      github.event.inputs.scrapers == 'todos' ||
+      github.event.inputs.scrapers == ''
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -66,41 +112,16 @@ jobs:
           path: export/dia.csv
           retention-days: 3
 
-  # ── CARREFOUR (Playwright, ~15 min) ──────────────────────────
-  carrefour:
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Instalar dependencias
-        run: pip install -r requirements.txt
-      - name: Instalar Playwright
-        run: |
-          playwright install chromium
-          playwright install-deps chromium
-      - name: Configurar .env
-        run: |
-          echo "CODIGO_POSTAL=${{ secrets.CODIGO_POSTAL }}" >> .env
-          echo "COOKIE_CARREFOUR=${{ secrets.COOKIE_CARREFOUR }}" >> .env
-      - name: Ejecutar Carrefour
-        run: python run_scraper.py carrefour --export-csv export/carrefour.csv --skip-db
-        timeout-minutes: 20
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: carrefour
-          path: export/carrefour.csv
-          retention-days: 3
-
-  # ── ALCAMPO (Playwright, ~17 min) ────────────────────────────
+  # ── ALCAMPO (Playwright completo, ~17 min) ───────────────────
   alcampo:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     continue-on-error: true
+    if: >-
+      github.event_name == 'schedule' ||
+      contains(github.event.inputs.scrapers, 'alcampo') ||
+      github.event.inputs.scrapers == 'todos' ||
+      github.event.inputs.scrapers == ''
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -128,10 +149,13 @@ jobs:
   # ── EROSKI (Playwright, ~62 min — el más lento) ──────────────
   eroski:
     runs-on: ubuntu-latest
-    # Eroski es el scraper más lento y su duración real puede variar
-    # bastante por latencia/bloqueos transitorios del sitio.
     timeout-minutes: 120
     continue-on-error: true
+    if: >-
+      github.event_name == 'schedule' ||
+      contains(github.event.inputs.scrapers, 'eroski') ||
+      github.event.inputs.scrapers == 'todos' ||
+      github.event.inputs.scrapers == ''
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -156,11 +180,65 @@ jobs:
           path: export/eroski.csv
           retention-days: 3
 
-  # ── MERGE: importar todos los CSVs a PostgreSQL (Aiden) ──────
+  # ── CONSUM (API directa, sin Playwright) ─────────────────────
+  consum:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    continue-on-error: true
+    if: >-
+      github.event_name == 'schedule' ||
+      contains(github.event.inputs.scrapers, 'consum') ||
+      github.event.inputs.scrapers == 'todos' ||
+      github.event.inputs.scrapers == ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+      - name: Ejecutar Consum
+        run: python run_scraper.py consum --export-csv export/consum.csv --skip-db
+        timeout-minutes: 20
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: consum
+          path: export/consum.csv
+          retention-days: 3
+
+  # ── CONDIS (API Empathy, sin Playwright) ─────────────────────
+  condis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    continue-on-error: true
+    if: >-
+      github.event_name == 'schedule' ||
+      contains(github.event.inputs.scrapers, 'condis') ||
+      github.event.inputs.scrapers == 'todos' ||
+      github.event.inputs.scrapers == ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+      - name: Ejecutar Condis
+        run: python run_scraper.py condis --export-csv export/condis.csv --skip-db
+        timeout-minutes: 20
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: condis
+          path: export/condis.csv
+          retention-days: 3
+
+  # ── MERGE: importar todos los CSVs a PostgreSQL (Aiven) ──────
   guardar-en-db:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [mercadona, dia, carrefour, alcampo, eroski]
+    needs: [mercadona, dia, carrefour, alcampo, eroski, consum, condis]
     if: always()
 
     steps:
@@ -171,7 +249,7 @@ jobs:
       - name: Instalar dependencias
         run: pip install -r requirements.txt
 
-      - name: Configurar conexión a base de datos
+      - name: Configurar conexion a base de datos
         run: |
           echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" >> .env
 
@@ -207,6 +285,20 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: eroski
+          path: export/
+        continue-on-error: true
+
+      - name: Descargar resultados de Consum
+        uses: actions/download-artifact@v4
+        with:
+          name: consum
+          path: export/
+        continue-on-error: true
+
+      - name: Descargar resultados de Condis
+        uses: actions/download-artifact@v4
+        with:
+          name: condis
           path: export/
         continue-on-error: true
 
