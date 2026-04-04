@@ -479,8 +479,8 @@ def apex_historico_precio_html(df_historico, nombre_producto=""):
     df[cf] = pd.to_datetime(df[cf])
     df = df.sort_values(cf)
 
-    # Convertir a timestamps ms + precios
-    timestamps = (df[cf].astype(np.int64) // 10**6).tolist()
+    # Convertir a timestamps ms (compatible con Pandas 2.0+ datetime64[us])
+    timestamps = [int(ts.timestamp() * 1000) for ts in df[cf]]
     precios = [round(float(p), 2) for p in df['precio'].tolist()]
     data_points = json.dumps(list(zip(timestamps, precios)))
 
@@ -597,7 +597,7 @@ def apex_comparativa_supermercados_html(df_historico_equiv):
     shape_list = []
     for i, s in enumerate(df['supermercado'].unique()):
         df_s = df[df['supermercado'] == s].sort_values(cf)
-        timestamps = (df_s[cf].astype(np.int64) // 10**6).tolist()
+        timestamps = [int(ts.timestamp() * 1000) for ts in df_s[cf]]
         precios = [round(float(p), 2) for p in df_s['precio'].tolist()]
         data_points = list(zip(timestamps, precios))
         series_list.append({"name": s, "data": data_points})
