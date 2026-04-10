@@ -64,7 +64,7 @@ class DatabaseManager:
                     "precios": 0, "precios_registrados": 0}
 
         cur = self._cursor()
-        nuevos = actualizados = precios_ok = precios_skip = 0
+        nuevos = actualizados = precios_ok = precios_skip = saltados = 0
         ts = datetime.now().isoformat()
         fecha_hoy = date.today().isoformat()
 
@@ -74,15 +74,20 @@ class DatabaseManager:
                 nombre       = str(row.get("Nombre") or "").strip()
                 supermercado = str(row.get("Supermercado") or "").strip()
                 if not id_externo or not nombre or not supermercado:
+                    saltados += 1
                     continue
                 try:
                     precio = float(row.get("Precio", 0))
                 except (ValueError, TypeError):
+                    saltados += 1
                     continue
                 if precio <= 0:
+                    saltados += 1
                     continue
 
-                precio_por_unidad = str(row.get("Precio_unidad") or "").strip() or None
+                precio_por_unidad = str(
+                    row.get("Precio_por_unidad") or row.get("Precio_unidad") or ""
+                ).strip() or None
                 categoria  = str(row.get("Categoria") or "").strip()
                 formato    = str(row.get("Formato") or "").strip()
                 url        = str(row.get("URL") or row.get("Url") or "").strip()
@@ -149,7 +154,7 @@ class DatabaseManager:
                 # ── Insertar precio: 1 registro por producto por DÍA ──
                 cur.execute(
                     "SELECT id FROM precios "
-                    "WHERE producto_id=%s AND DATE(fecha_captura)=%s",
+                    "WHERE producto_id=%s AND LEFT(fecha_captura, 10)=%s",
                     (prod_id, fecha_hoy),
                 )
                 if not cur.fetchone():
@@ -165,14 +170,18 @@ class DatabaseManager:
                 else:
                     precios_skip += 1
             except Exception as e:
-                logger.debug("Error guardando producto: %s", e)
+                logger.error("Error guardando producto: %s", e)
+                try:
+                    self._conn.rollback()
+                except Exception:
+                    pass
 
         self._conn.commit()
 
         logger.info(
-            "guardar_productos: fecha_hoy=%s, "
+            "guardar_productos: fecha_hoy=%s, total=%d, saltados=%d, "
             "precios_insertados=%d, precios_ya_existían=%d",
-            fecha_hoy, precios_ok, precios_skip,
+            fecha_hoy, len(df), saltados, precios_ok, precios_skip,
         )
 
         return {"nuevos": nuevos, "productos_nuevos": nuevos,
