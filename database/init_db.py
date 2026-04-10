@@ -155,12 +155,12 @@ def inicializar_base_datos(db_path: str = None) -> str:
           AND i.indisunique = true
           AND i.indpred IS NULL
           AND ARRAY(
-                SELECT a.attname
+                SELECT a.attname::text
                 FROM pg_attribute a
                 WHERE a.attrelid = c.oid
                   AND a.attnum = ANY(i.indkey)
                 ORDER BY a.attname
-              ) = ARRAY['id_externo', 'supermercado']
+              ) = ARRAY['id_externo', 'supermercado']::text[]
         LIMIT 1
     """)
     if not cur.fetchone():
