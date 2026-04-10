@@ -108,38 +108,46 @@ class DatabaseManager:
                     categoria_normalizada = ""
                     formato_normalizado = formato
 
-                cur.execute("""
-                    INSERT INTO productos
-                        (id_externo, nombre, supermercado, categoria, formato,
-                         url, url_imagen, fecha_creacion, fecha_actualizacion,
-                         tipo_producto, marca, nombre_normalizado,
-                         categoria_normalizada, formato_normalizado)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                    ON CONFLICT (id_externo, supermercado) DO UPDATE SET
-                        nombre                = EXCLUDED.nombre,
-                        categoria             = EXCLUDED.categoria,
-                        formato               = EXCLUDED.formato,
-                        url                   = EXCLUDED.url,
-                        url_imagen            = EXCLUDED.url_imagen,
-                        fecha_actualizacion   = EXCLUDED.fecha_actualizacion,
-                        tipo_producto         = EXCLUDED.tipo_producto,
-                        marca                 = EXCLUDED.marca,
-                        nombre_normalizado    = EXCLUDED.nombre_normalizado,
-                        categoria_normalizada = EXCLUDED.categoria_normalizada,
-                        formato_normalizado   = EXCLUDED.formato_normalizado
-                    RETURNING id, (xmax = 0) AS is_new
-                """, (id_externo, nombre, supermercado, categoria, formato,
-                      url, url_imagen, ts, ts,
-                      tipo_producto, marca, nombre_normalizado,
-                      categoria_normalizada, formato_normalizado))
-                upsert_result = cur.fetchone()
-                if not upsert_result:
-                    continue
-                prod_id = upsert_result["id"]
-                if upsert_result["is_new"]:
-                    nuevos += 1
-                else:
+                cur.execute(
+                    "SELECT id FROM productos "
+                    "WHERE id_externo=%s AND supermercado=%s",
+                    (id_externo, supermercado),
+                )
+                existing = cur.fetchone()
+                if existing:
+                    prod_id = existing["id"]
+                    cur.execute("""
+                        UPDATE productos SET
+                            nombre=%s, categoria=%s, formato=%s,
+                            url=%s, url_imagen=%s, fecha_actualizacion=%s,
+                            tipo_producto=%s, marca=%s,
+                            nombre_normalizado=%s, categoria_normalizada=%s,
+                            formato_normalizado=%s
+                        WHERE id=%s
+                    """, (nombre, categoria, formato,
+                          url, url_imagen, ts,
+                          tipo_producto, marca,
+                          nombre_normalizado, categoria_normalizada,
+                          formato_normalizado, prod_id))
                     actualizados += 1
+                else:
+                    cur.execute("""
+                        INSERT INTO productos
+                            (id_externo, nombre, supermercado, categoria, formato,
+                             url, url_imagen, fecha_creacion, fecha_actualizacion,
+                             tipo_producto, marca, nombre_normalizado,
+                             categoria_normalizada, formato_normalizado)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        RETURNING id
+                    """, (id_externo, nombre, supermercado, categoria, formato,
+                          url, url_imagen, ts, ts,
+                          tipo_producto, marca, nombre_normalizado,
+                          categoria_normalizada, formato_normalizado))
+                    result = cur.fetchone()
+                    if not result:
+                        continue
+                    prod_id = result["id"]
+                    nuevos += 1
 
                 # ── Calcular precio de referencia ─────────────────────
                 precio_ref = None

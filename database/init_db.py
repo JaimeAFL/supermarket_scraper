@@ -148,11 +148,19 @@ def inicializar_base_datos(db_path: str = None) -> str:
     # Requerida por el UPSERT ON CONFLICT en guardar_productos.
     # CREATE TABLE IF NOT EXISTS no la añade si la tabla ya existía sin ella.
     cur.execute("""
-        SELECT 1 FROM pg_indexes
-        WHERE tablename = 'productos'
-          AND indexdef LIKE '%UNIQUE%'
-          AND indexdef LIKE '%id_externo%'
-          AND indexdef LIKE '%supermercado%'
+        SELECT 1
+        FROM pg_index i
+        JOIN pg_class c ON c.oid = i.indrelid
+        WHERE c.relname = 'productos'
+          AND i.indisunique = true
+          AND i.indpred IS NULL
+          AND ARRAY(
+                SELECT a.attname
+                FROM pg_attribute a
+                WHERE a.attrelid = c.oid
+                  AND a.attnum = ANY(i.indkey)
+                ORDER BY a.attname
+              ) = ARRAY['id_externo', 'supermercado']
         LIMIT 1
     """)
     if not cur.fetchone():
