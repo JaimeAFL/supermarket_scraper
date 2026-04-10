@@ -144,6 +144,66 @@ def inicializar_base_datos(db_path: str = None) -> str:
     if 'unidad_referencia' not in existing_cols:
         cur.execute("ALTER TABLE precios ADD COLUMN unidad_referencia TEXT DEFAULT ''")
 
+    # ── Restricción UNIQUE en productos(id_externo, supermercado) ────────
+    # Requerida por el UPSERT ON CONFLICT en guardar_productos.
+    # CREATE TABLE IF NOT EXISTS no la añade si la tabla ya existía sin ella.
+    cur.execute("""
+        SELECT 1 FROM pg_indexes
+        WHERE tablename = 'productos'
+          AND indexdef LIKE '%UNIQUE%'
+          AND indexdef LIKE '%id_externo%'
+          AND indexdef LIKE '%supermercado%'
+        LIMIT 1
+    """)
+    if not cur.fetchone():
+        logger.info("Restricción UNIQUE ausente — deduplicando y añadiendo...")
+
+        # 1. Redirigir precios de duplicados al representante (MIN id)
+        cur.execute("""
+            UPDATE precios p
+            SET producto_id = repr.id_ok
+            FROM (
+                SELECT id_externo, supermercado, MIN(id) AS id_ok
+                FROM productos
+                GROUP BY id_externo, supermercado
+                HAVING COUNT(*) > 1
+            ) repr
+            JOIN productos dup
+              ON dup.id_externo = repr.id_externo
+             AND dup.supermercado = repr.supermercado
+             AND dup.id > repr.id_ok
+            WHERE p.producto_id = dup.id
+        """)
+
+        # 2. Eliminar filas dependientes que apuntan a duplicados
+        cur.execute("""
+            DELETE FROM favoritos
+            WHERE producto_id NOT IN (
+                SELECT MIN(id) FROM productos GROUP BY id_externo, supermercado
+            )
+        """)
+        cur.execute("""
+            DELETE FROM lista_productos
+            WHERE producto_id NOT IN (
+                SELECT MIN(id) FROM productos GROUP BY id_externo, supermercado
+            )
+        """)
+
+        # 3. Borrar duplicados (mantiene el de menor id por par)
+        cur.execute("""
+            DELETE FROM productos
+            WHERE id NOT IN (
+                SELECT MIN(id) FROM productos GROUP BY id_externo, supermercado
+            )
+        """)
+
+        # 4. Crear el índice único (compatible con ON CONFLICT)
+        cur.execute("""
+            CREATE UNIQUE INDEX productos_id_externo_supermercado_key
+            ON productos(id_externo, supermercado)
+        """)
+        logger.info("Restricción UNIQUE creada en productos(id_externo, supermercado).")
+
     # ── Índices ───────────────────────────────────────────────────────
     indices = [
         "CREATE INDEX IF NOT EXISTS idx_precios_producto      ON precios(producto_id)",
