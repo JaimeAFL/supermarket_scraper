@@ -20,6 +20,7 @@ Cada semana, de forma automática, la aplicación:
 5. **Gestiona listas de la compra** reutilizables (semanal, barbacoa, cumpleaños...) con exportación a PDF y email
 6. **Informa sobre costes de envío** de cada supermercado y calcula cuánto falta para envío gratis
 7. **Calcula la ruta óptima** entre las tiendas físicas donde comprar, usando OpenStreetMap y OSRM sin API key
+8. **Expone una API REST** con 25 endpoints para consultas externas (FastAPI + SlowAPI), con Swagger UI y ReDoc incluidos
 
 ---
 
@@ -94,7 +95,7 @@ Dashboard Streamlit con 6 vistas:
 - [x] Listas de la compra reutilizables con etiquetas
 - [x] Información de costes de envío por supermercado
 - [x] Ruta óptima entre tiendas (Nominatim + Overpass + OSRM)
-- [ ] API REST para consultas externas
+- [x] API REST para consultas externas (FastAPI, 25 endpoints, Swagger UI)
 
 ---
 
@@ -104,9 +105,22 @@ Dashboard Streamlit con 6 vistas:
 supermarket_scraper/
 ├── .github/workflows/
 │   └── scraper_semanal.yml       # CI/CD: scrapers en paralelo + merge a PostgreSQL
+├── api/
+│   ├── main.py                   # App FastAPI + CORS + rate limiter (SlowAPI)
+│   ├── dependencies.py           # Conexión DB + autenticación API key
+│   ├── schemas.py                # Modelos Pydantic de request/response
+│   └── routers/
+│       ├── productos.py          # GET /api/v1/productos (lista, búsqueda, detalle)
+│       ├── precios.py            # GET /api/v1/productos/{id}/precios (histórico)
+│       ├── comparador.py         # GET /api/v1/comparar, /alternativa
+│       ├── favoritos.py          # GET / POST / DELETE /api/v1/favoritos
+│       ├── listas.py             # CRUD completo /api/v1/listas
+│       ├── envios.py             # GET /api/v1/envios
+│       ├── estadisticas.py       # GET /api/v1/estadisticas, /categorias
+│       └── rutas.py              # POST /api/v1/rutas/* (geocodificar, cercanos, optimizar)
 ├── scraper/
 │   ├── mercadona.py              # API pública (~4.300 productos)
-│   ├── carrefour.py              # API + Playwright, interceptación de red
+│   ├── carrefour.py              # API directa (~2.400 productos)
 │   ├── dia.py                    # API REST, cookie automática vía Playwright
 │   ├── alcampo.py                # API + Playwright (~10.000 productos)
 │   ├── eroski.py                 # Web scraping + Playwright, scroll infinito
@@ -136,8 +150,17 @@ supermarket_scraper/
 │
 ├── routing.py                    # Geocodificación, búsqueda de tiendas y ruta óptima
 ├── tests/
-│   ├── test_listas.py            # Tests unitarios para métodos de listas y envíos
-│   └── test_routing.py           # Tests unitarios para routing (mocks de APIs externas)
+│   ├── test_mercadona.py         # Tests scraper Mercadona
+│   ├── test_carrefour.py         # Tests scraper Carrefour
+│   ├── test_dia.py               # Tests scraper Dia
+│   ├── test_alcampo.py           # Tests scraper Alcampo
+│   ├── test_eroski.py            # Tests scraper Eroski
+│   ├── test_consum.py            # Tests scraper Consum
+│   ├── test_condis.py            # Tests scraper Condis
+│   ├── test_db.py                # Tests capa de base de datos
+│   ├── test_normalizer.py        # Tests motor de normalización
+│   ├── test_listas.py            # Tests listas y envíos (24 tests)
+│   └── test_routing.py           # Tests routing con mocks de APIs externas (19 tests)
 ├── main.py                       # Orquestador principal (todos los scrapers)
 ├── run_scraper.py                # Ejecución individual + export CSV para CI/CD
 ├── import_results.py             # Merge de CSVs paralelos → base de datos
@@ -156,6 +179,7 @@ supermarket_scraper/
 | Extracción | Requests + Playwright (Chromium headless) |
 | Base de datos | PostgreSQL (Aiden) |
 | Dashboard | Streamlit (multi-página) + Plotly |
+| API REST | FastAPI + SlowAPI (rate limiter) + uvicorn |
 | Normalización | Motor NLP propio (reglas + taxonomía) |
 | Matching | RapidFuzz (similitud de texto) |
 | Mapas y rutas | Folium + streamlit-folium |
@@ -163,7 +187,7 @@ supermarket_scraper/
 | Búsqueda de tiendas | Overpass API (OpenStreetMap, sin API key) |
 | Optimización de ruta | OSRM demo server (TSP /trip, sin API key) |
 | Automatización | GitHub Actions (ejecución paralela semanal) |
-| Tests | pytest (43 tests unitarios con mocks) |
+| Tests | pytest (tests unitarios con mocks para todos los módulos) |
 
 ---
 
@@ -196,9 +220,30 @@ Los scrapers de Playwright (Carrefour, Alcampo, Eroski) son los más propensos a
 
 Upsert por `(id_externo, supermercado)`: si el producto ya existe se actualizan sus datos; siempre se inserta un nuevo registro de precio con fecha. La base de datos es PostgreSQL alojada en Aiden: persiste independientemente del pipeline de CI/CD y no se versiona en el repositorio.
 
+### API REST con FastAPI
+
+Todos los datos son accesibles mediante una API REST con 25 endpoints agrupados en 8 módulos:
+
+- **`/api/v1/productos`** — lista, búsqueda inteligente y detalle de producto.
+- **`/api/v1/productos/{id}/precios`** — histórico de precios de un producto.
+- **`/api/v1/comparar`** — comparador por precio unitario entre supermercados.
+- **`/api/v1/favoritos`** — gestión de la lista de seguimiento.
+- **`/api/v1/listas`** — CRUD completo de listas de la compra reutilizables.
+- **`/api/v1/envios`** — costes de envío por supermercado.
+- **`/api/v1/estadisticas`** — métricas globales y categorías disponibles.
+- **`/api/v1/rutas`** — geocodificación, búsqueda de tiendas y optimización de ruta.
+
+Incluye rate limiting (60 req/min por IP), CORS configurable y autenticación opcional por API key. Swagger UI disponible en `/docs` y ReDoc en `/redoc`.
+
+```bash
+uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
+```
+
 ### CI/CD con jobs paralelos
 
 Los scrapers corren en paralelo como jobs independientes en GitHub Actions. Si uno falla, los demás se guardan igualmente. El job de merge importa todos los CSVs directamente a PostgreSQL sin hacer commit de base de datos al repositorio.
+
+El `workflow_dispatch` permite elegir qué scrapers ejecutar al lanzar manualmente (campo `scrapers`: `mercadona,carrefour` o `todos`).
 
 ```
 Job Mercadona (~30s)   ─┐
@@ -305,12 +350,13 @@ Cada scraper corre como job independiente con `continue-on-error: true`. El job 
 
 ## Documentación adicional
 
-- `docs/arquitectura.md`: arquitectura técnica y flujo de datos
+- `docs/arquitectura.md`: arquitectura técnica, flujo de datos y API REST
 - `docs/api_supermercados.md`: estrategia de extracción por supermercado
 - `docs/normalizacion.md`: motor de normalización (tipo, marca, formato, categoría)
-- `docs/ci_cd.md`: pipeline semanal en GitHub Actions
+- `docs/ci_cd.md`: pipeline semanal en GitHub Actions con selección manual
 - `docs/guia_env.md`: configuración de variables de entorno
 - `docs/CHANGELOG.md`: historial de cambios versión a versión
+- Swagger UI interactivo: `http://localhost:8000/docs` (con la API en marcha)
 
 ---
 

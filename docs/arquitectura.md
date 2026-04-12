@@ -34,6 +34,13 @@ Documento técnico que explica cómo funciona internamente el proyecto Supermark
 │                    Nominatim (geocodificación) · Overpass (tiendas)  │
 │                    OSRM /trip (ruta óptima TSP)                      │
 ├──────────────────────────────────────────────────────────────────────┤
+│                    api/ (FastAPI)                                     │
+│                    25 endpoints · rate limiter · API key auth · CORS │
+│                    /api/v1/productos · /precios · /comparar           │
+│                    /favoritos · /listas · /envios · /estadisticas     │
+│                    /rutas (geocodificar · cercanos · optimizar)       │
+│                    Swagger UI → /docs   ReDoc → /redoc               │
+├──────────────────────────────────────────────────────────────────────┤
 │                    app.py (Streamlit)                                 │
 │                    6 vistas: métricas, histórico, comparador,        │
 │                    favoritos, cesta (envíos + ruta), listas          │
@@ -46,6 +53,19 @@ Documento técnico que explica cómo funciona internamente el proyecto Supermark
 supermarket_scraper/
 ├── .github/workflows/
 │   └── scraper_semanal.yml       # CI/CD: scrapers en paralelo + merge a PostgreSQL
+├── api/
+│   ├── main.py                   # App FastAPI + CORS + rate limiter
+│   ├── dependencies.py           # Conexión DB + autenticación API key
+│   ├── schemas.py                # Modelos Pydantic de request/response
+│   └── routers/
+│       ├── productos.py          # GET /api/v1/productos (lista, búsqueda, detalle)
+│       ├── precios.py            # GET /api/v1/productos/{id}/precios
+│       ├── comparador.py         # GET /api/v1/comparar, /alternativa
+│       ├── favoritos.py          # GET / POST / DELETE /api/v1/favoritos
+│       ├── listas.py             # CRUD completo /api/v1/listas
+│       ├── envios.py             # GET /api/v1/envios
+│       ├── estadisticas.py       # GET /api/v1/estadisticas, /categorias
+│       └── rutas.py              # POST /api/v1/rutas/*
 ├── database/
 │   ├── init_db.py                # Schema + migración automática (incluye listas, envíos)
 │   └── database_db_manager.py    # CRUD, búsqueda inteligente, upsert, listas, envíos
@@ -76,8 +96,17 @@ supermarket_scraper/
 │       ├── styles.py                     # Estilos CSS del dashboard
 │       └── export.py                     # Exportación, PDF y enlaces de email
 ├── tests/
-│   ├── test_listas.py            # Tests unitarios: listas y envíos (24 tests)
-│   └── test_routing.py           # Tests unitarios: routing con mocks (19 tests)
+│   ├── test_mercadona.py         # Tests scraper Mercadona
+│   ├── test_carrefour.py         # Tests scraper Carrefour
+│   ├── test_dia.py               # Tests scraper Dia
+│   ├── test_alcampo.py           # Tests scraper Alcampo
+│   ├── test_eroski.py            # Tests scraper Eroski
+│   ├── test_consum.py            # Tests scraper Consum
+│   ├── test_condis.py            # Tests scraper Condis
+│   ├── test_db.py                # Tests capa de base de datos
+│   ├── test_normalizer.py        # Tests motor de normalización
+│   ├── test_listas.py            # Tests listas y envíos (24 tests)
+│   └── test_routing.py           # Tests routing con mocks de APIs externas (19 tests)
 ├── routing.py                    # Geocodificación + búsqueda tiendas + ruta óptima
 ├── main.py                       # Orquestador: todos los scrapers secuencial
 ├── run_scraper.py                # Ejecución individual + flags --export-csv, --skip-db
@@ -138,8 +167,9 @@ Ver `normalizacion.md` para el detalle completo.
 
 `database_db_manager.py` recibe el DataFrame ya normalizado y conecta a PostgreSQL mediante la variable de entorno `DATABASE_URL`:
 
-- **Upsert en `productos`:** Si el producto no existe (por `id_externo` + `supermercado`), lo crea. Si ya existe, actualiza sus campos normalizados.
+- **Upsert en `productos`:** Patrón SELECT + INSERT/UPDATE en lugar de `ON CONFLICT` para compatibilidad con versiones de PostgreSQL sin índice UNIQUE previo. Si el producto no existe (por `id_externo` + `supermercado`), lo crea; si ya existe, actualiza sus campos normalizados. La restricción `UNIQUE(id_externo, supermercado)` se crea automáticamente por `init_db.py`.
 - **Insert en `precios`:** Un registro por producto por día. Deduplicación automática por fecha si el scraper se ejecuta más de una vez al día.
+- **Gestión de transacciones:** Errores de psycopg2 se exponen explícitamente con rollback inmediato para evitar cascadas silenciosas que bloqueen la sesión.
 - **Fallback de URL:** Si `Url` llega vacía, construye la URL a partir de `id_externo` + el patrón de URL conocido para cada supermercado.
 
 La base de datos está alojada en Aiden y no se versiona en el repositorio. No se hace ningún commit de datos al finalizar el pipeline.
@@ -182,6 +212,43 @@ Las búsquedas del dashboard usan dos niveles con `UNION ALL`:
 - **`geocodificar(direccion)`** — Llama a Nominatim (OpenStreetMap) para convertir una dirección o código postal en coordenadas. Respeta el límite de 1 req/seg con `time.sleep(1)`.
 - **`buscar_supermercados_cercanos(lat, lon, supermercados, radio_metros)`** — Consulta Overpass API con una query que busca nodos y ways de los supermercados indicados dentro del radio. Devuelve solo la tienda más cercana por cadena.
 - **`calcular_ruta_optima(origen, paradas, modo)`** — Llama a OSRM `/trip` con `source=first`, `destination=last`, `roundtrip=true`. Resuelve el TSP y devuelve las paradas reordenadas, geometría GeoJSON para Folium, tramos y métricas totales.
+
+### 8. API REST (FastAPI)
+
+`api/` expone todos los datos a través de 25 endpoints REST agrupados en 8 routers bajo el prefijo `/api/v1/`:
+
+| Ruta | Métodos | Descripción |
+|---|---|---|
+| `/api/v1/productos` | GET | Lista paginada de productos con precio actual |
+| `/api/v1/productos/buscar` | GET | Búsqueda inteligente (prioriza `tipo_producto`) |
+| `/api/v1/productos/{id}` | GET | Detalle completo de un producto |
+| `/api/v1/productos/{id}/precios` | GET | Histórico de precios del producto |
+| `/api/v1/comparar` | GET | Tabla comparativa por supermercado |
+| `/api/v1/productos/{id}/alternativa` | GET | Alternativa más barata en otro supermercado |
+| `/api/v1/favoritos` | GET, POST, DELETE | Gestión de la lista de seguimiento |
+| `/api/v1/listas` | GET, POST | Listar y crear listas de la compra |
+| `/api/v1/listas/{id}` | GET, PUT, DELETE | Detalle, edición y borrado de una lista |
+| `/api/v1/listas/{id}/duplicar` | POST | Duplicar una lista |
+| `/api/v1/listas/{id}/productos` | POST, PUT, DELETE | Añadir, actualizar y quitar productos |
+| `/api/v1/listas/{id}/cesta` | GET | Exportar lista como items de cesta |
+| `/api/v1/envios` | GET | Costes de envío de todos los supermercados |
+| `/api/v1/envios/{supermercado}` | GET | Coste de envío de un supermercado concreto |
+| `/api/v1/estadisticas` | GET | Métricas globales (productos, scrapers, fechas) |
+| `/api/v1/categorias` | GET | Categorías normalizadas disponibles |
+| `/api/v1/rutas/geocodificar` | POST | Dirección → coordenadas (Nominatim) |
+| `/api/v1/rutas/supermercados-cercanos` | POST | Tiendas más cercanas (Overpass) |
+| `/api/v1/rutas/optimizar` | POST | Ruta óptima TSP (OSRM) |
+
+**Características:**
+- Rate limiter: 60 req/min por IP (SlowAPI)
+- Autenticación opcional por API key (header `X-API-Key` o query param `api_key`)
+- CORS configurable mediante variable de entorno `CORS_ORIGINS`
+- Swagger UI en `/docs`, ReDoc en `/redoc`
+
+**Arranque:**
+```bash
+uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
+```
 
 ## Modelo de datos (PostgreSQL)
 
@@ -254,6 +321,8 @@ Tiempo total: ~64 min (limitado por Eroski + 2 min de merge)
 ```
 
 Cada job: instala dependencias → ejecuta `run_scraper.py <super> --export-csv ... --skip-db` → sube CSV como artifact. Tiene `continue-on-error: true`.
+
+El `workflow_dispatch` acepta un parámetro `scrapers` (por defecto `todos`) que permite elegir qué scrapers ejecutar al lanzar manualmente: p. ej. `mercadona,carrefour`. Cada job tiene una condición `if` que lo salta si no está incluido en la selección.
 
 El job de merge descarga todos los artifacts y ejecuta `import_results.py export/*.csv` con normalización completa. Se ejecuta siempre (`if: always()`), incluso si algún scraper falló. No realiza ningún commit al repositorio.
 
