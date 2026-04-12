@@ -53,10 +53,16 @@ La base de datos persiste en Aiden independientemente del pipeline. No se realiz
 on:
   schedule:
     - cron: '0 6 * * 1'    # Lunes 6:00 UTC = 7:00 España (invierno) / 8:00 (verano)
-  workflow_dispatch:         # Ejecución manual desde la UI de GitHub
+  workflow_dispatch:
+    inputs:
+      scrapers:
+        description: 'Scrapers a ejecutar (separados por coma, o "todos")'
+        required: false
+        default: 'todos'
+        type: string
 ```
 
-`workflow_dispatch` permite lanzar el pipeline manualmente desde `Actions → Scraper Semanal → Run workflow`. Útil para recuperar datos tras un fallo o forzar una actualización.
+`workflow_dispatch` permite lanzar el pipeline manualmente desde `Actions → Scraper Semanal → Run workflow`. El campo `scrapers` acepta una lista de scrapers separados por coma (`mercadona,carrefour`) o el valor `todos` (por defecto). Útil para recuperar datos de un supermercado concreto tras un fallo sin tener que re-ejecutar los demás.
 
 ## Estructura del workflow
 
@@ -66,36 +72,47 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     continue-on-error: true
+    if: >-            # Condición de selección manual
+      github.event_name == 'schedule' ||
+      contains(github.event.inputs.scrapers, 'mercadona') ||
+      github.event.inputs.scrapers == 'todos' ||
+      github.event.inputs.scrapers == ''
 
   dia:                # API REST + cookie automática con Playwright
     runs-on: ubuntu-latest
     timeout-minutes: 10
     continue-on-error: true
+    if: >- ...
 
-  carrefour:          # Playwright
+  carrefour:          # API directa, sin Playwright
     runs-on: ubuntu-latest
     timeout-minutes: 25
     continue-on-error: true
+    if: >- ...
 
   alcampo:            # Playwright
     runs-on: ubuntu-latest
     timeout-minutes: 30
     continue-on-error: true
+    if: >- ...
 
   eroski:             # Playwright + scroll infinito, el más pesado
     runs-on: ubuntu-latest
-    timeout-minutes: 80
+    timeout-minutes: 120
     continue-on-error: true
+    if: >- ...
 
   consum:             # API REST, sin Playwright
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     continue-on-error: true
+    if: >- ...
 
   condis:             # API Empathy (REST), sin Playwright
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     continue-on-error: true
+    if: >- ...
 
   guardar-en-db:      # Merge final → importa a PostgreSQL (Aiden)
     needs: [mercadona, dia, carrefour, alcampo, eroski, consum, condis]
@@ -136,9 +153,9 @@ Cada paso de descarga de artifact tiene `continue-on-error: true`. Si un scraper
 | Dia | ~1 min | 10 min | Muy amplio |
 | Carrefour | ~15 min | 25 min | +67% |
 | Alcampo | ~17 min | 30 min | +76% |
-| Eroski | ~62 min | 80 min | +29% |
-| Consum | ~2 min | 10 min | Muy amplio |
-| Condis | ~5 min | 15 min | +200% |
+| Eroski | ~62 min | 120 min | +94% |
+| Consum | ~2 min | 25 min | Muy amplio |
+| Condis | ~5 min | 25 min | Muy amplio |
 | Merge | ~2 min | 15 min | Muy amplio |
 
 ## Artifacts

@@ -4,6 +4,59 @@ Registro de todos los cambios realizados en Supermarket Price Tracker.
 
 ---
 
+## v5.0.0 — API REST y estabilidad de base de datos (2026-04-12)
+
+Versión mayor con una nueva capa API REST completa (FastAPI) y múltiples correcciones de robustez en la base de datos y el pipeline de CI/CD.
+
+### Añadido
+
+#### API REST con FastAPI
+
+- **`api/`** — Nueva capa de API REST con 25 endpoints bajo el prefijo `/api/v1/`:
+  - `api/main.py`: app FastAPI con CORS, rate limiter (SlowAPI, 60 req/min por IP) y gestión de ciclo de vida de la conexión DB.
+  - `api/dependencies.py`: inyección de dependencia `get_db()` (reutiliza `DatabaseManager`) y `verify_api_key()` para autenticación opcional por API key.
+  - `api/schemas.py`: modelos Pydantic para todas las respuestas.
+  - `api/routers/productos.py`: `GET /api/v1/productos` (lista paginada), `GET /api/v1/productos/buscar` (búsqueda inteligente), `GET /api/v1/productos/{id}` (detalle).
+  - `api/routers/precios.py`: `GET /api/v1/productos/{id}/precios` (histórico de precios).
+  - `api/routers/comparador.py`: `GET /api/v1/comparar` (tabla por supermercado), `GET /api/v1/productos/{id}/alternativa` (alternativa más barata).
+  - `api/routers/favoritos.py`: `GET / POST / DELETE /api/v1/favoritos`.
+  - `api/routers/listas.py`: CRUD completo — `GET / POST /api/v1/listas`, `GET / PUT / DELETE /api/v1/listas/{id}`, `POST /api/v1/listas/{id}/duplicar`, `POST / PUT / DELETE /api/v1/listas/{id}/productos/{producto_id}`, `GET /api/v1/listas/{id}/cesta`.
+  - `api/routers/envios.py`: `GET /api/v1/envios`, `GET /api/v1/envios/{supermercado}`.
+  - `api/routers/estadisticas.py`: `GET /api/v1/estadisticas`, `GET /api/v1/categorias`.
+  - `api/routers/rutas.py`: `POST /api/v1/rutas/geocodificar`, `POST /api/v1/rutas/supermercados-cercanos`, `POST /api/v1/rutas/optimizar`.
+- **Swagger UI** disponible en `http://localhost:8000/docs`. **ReDoc** en `http://localhost:8000/redoc`.
+
+#### Selección manual de scrapers en CI/CD
+
+- `workflow_dispatch` acepta el parámetro `scrapers` (p. ej. `mercadona,carrefour` o `todos`). Cada job tiene una condición `if` que lo salta si no está incluido, permitiendo re-ejecutar scrapers concretos sin lanzar el pipeline completo.
+
+### Corregido
+
+#### Base de datos
+
+- **`fix(db): replace ON CONFLICT upsert with SELECT+INSERT/UPDATE`** — El upsert de `guardar_productos()` pasó de `ON CONFLICT DO UPDATE` a un patrón SELECT + INSERT/UPDATE explícito, necesario porque PostgreSQL requiere el índice UNIQUE antes de compilar la cláusula `ON CONFLICT`. Ahora funciona correctamente en bases de datos recién creadas o migradas.
+- **`fix(init_db): add missing UNIQUE constraint on productos(id_externo, supermercado)`** — Se añadió la restricción UNIQUE que el upsert requiere y que faltaba en el schema original.
+- **`fix(db): expose silent errors and prevent psycopg2 transaction cascade`** — Los errores de psycopg2 en `guardar_productos()` provocaban que el cursor quedara en estado de error, haciendo fallar todas las operaciones posteriores de la misma conexión. Ahora se hace `rollback()` explícito y se re-lanza la excepción.
+- **`fix(init_db): cast attname to text for pg_index array comparison`** — La consulta de migración automática que detecta columnas faltantes fallaba en algunas versiones de PostgreSQL por incompatibilidad de tipos en el array `pg_index`. Corregido con `::text`.
+
+#### Dashboard
+
+- **`fix: chart dates showing 1970`** — Las fechas de los gráficos de histórico aparecían como 01/01/1970 en instalaciones con Pandas 2.0+. La causa era que `datetime64[us]` no se convierte automáticamente a timestamp Unix en nanosegundos como hacía Pandas 1.x. Corregido con conversión explícita antes de pasar los datos a Plotly.
+
+#### CI/CD
+
+- **Carrefour sin Playwright** — El scraper de Carrefour se migró a llamadas de API directas, eliminando la dependencia de Playwright en su job de CI/CD (más rápido y estable).
+- **Eroski timeout ampliado** — El timeout del job de Eroski pasó de 80 a 120 minutos para absorber variaciones en tiempos de scraping con scroll infinito.
+
+### Cambiado
+
+- **`requirements.txt`**: añadidos `fastapi`, `uvicorn[standard]`, `slowapi`, `python-multipart`.
+- **`docs/arquitectura.md`**: diagrama y estructura de archivos actualizados con la capa `api/`; nueva sección REST API; descripción actualizada del mecanismo de upsert.
+- **`docs/ci_cd.md`**: `workflow_dispatch` con selección de scrapers documentado; timeouts actualizados.
+- **`README.md`**: roadmap, estructura, tecnologías y características técnicas actualizados.
+
+---
+
 ## v4.0.0 — Listas de la compra, envíos y ruta óptima (2026-03-19)
 
 Versión mayor con tres nuevas funcionalidades: gestión de listas reutilizables, información de costes de envío por supermercado y cálculo de ruta óptima entre tiendas físicas.
